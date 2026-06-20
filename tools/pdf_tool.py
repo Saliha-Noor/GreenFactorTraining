@@ -70,3 +70,22 @@ def process_text(text, filename, output_dir):
 
     print(f"  Done: {len(chunks)} chunks saved")
     return out_path
+def process_text(text, filename, output_dir):
+    print(f"  Chunking: {filename}")
+    if not text or not text.strip():
+        print(f"  Warning: Empty text for {filename}")
+        return None
+    chunks = chunk_text(text)
+    if not chunks:
+        return None
+    output = {
+        "source": filename,
+        "total_chunks": len(chunks),
+        "chunks": chunks,
+    }
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"{filename}.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+    print(f"  ✓ {len(chunks)} chunks → {os.path.basename(out_path)}")
+    return out_path

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LegalLens — Multi-Agent Contract Review System</title>
+    <meta name="description" content="Upload a legal contract and receive an AI-powered risk analysis report using 4 specialized agents and the CUAD dataset.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=3">
+</head>
+<body>
+    <!-- ─── Header ──────────────────────────────────────────── -->
+    <header id="app-header">
+        <div class="header-inner">
+            <div class="logo">
+                <div class="logo-icon">⚖</div>
+                <div>
+                    <h1>LegalLens</h1>
+                    <span class="tagline">Multi-Agent Contract Review System</span>
+                </div>
+            </div>
+            <nav>
+                <button class="nav-btn active" data-view="upload" id="nav-upload">Upload</button>
+                <button class="nav-btn" data-view="history" id="nav-history">History</button>
+                <button class="nav-btn" data-view="clause-db" id="nav-clausedb">CUAD Database</button>
+            </nav>
+        </div>
+    </header>
+
+    <main id="app-main">
+        <!-- ─── Stats Bar ─────────────────────────────────────── -->
+        <div class="stats-bar" id="stats-bar">
+            <div class="stat-card">
+                <div class="stat-value" id="stat-clauses">—</div>
+                <div class="stat-label">CUAD Clause Types</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-examples">—</div>
+                <div class="stat-label">Training Examples</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-contracts">—</div>
+                <div class="stat-label">Contracts Analyzed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">4</div>
+                <div class="stat-label">AI Agents</div>
+            </div>
+        </div>
+
+        <!-- ─── Upload View ─────────────────────────────────── -->
+        <section id="view-upload" class="view active">
+            <div class="upload-hero">
+                <h2>Analyze Your Contract</h2>
+                <p>Upload a PDF contract and our 4-agent AI pipeline will identify clauses, assess risks, and generate a structured report powered by the CUAD dataset.</p>
+            </div>
+
+            <div class="upload-zone" id="drop-zone">
+                <div class="upload-icon">📄</div>
+                <p class="upload-title">Drag & drop your contract PDF here</p>
+                <p class="upload-sub">or click to browse · PDF files only</p>
+                <input type="file" id="file-input" accept=".pdf" hidden>
+            </div>
+
+            <!-- Pipeline Progress -->
+            <div class="pipeline-progress" id="pipeline-progress" style="display:none">
+                <h3>🔄 Pipeline Running...</h3>
+                <div class="pipeline-steps">
+                    <div class="step" id="step-parser">
+                        <div class="step-icon">📋</div>
+                        <div class="step-info">
+                            <span class="step-label">Agent 1: PDF Parser</span>
+                            <span class="step-status">Waiting...</span>
+                        </div>
+                        <div class="step-bar"><div class="step-fill"></div></div>
+                    </div>
+                    <div class="step" id="step-classifier">
+                        <div class="step-icon">🔍</div>
+                        <div class="step-info">
+                            <span class="step-label">Agent 2: CUAD Classifier</span>
+                            <span class="step-status">Waiting...</span>
+                        </div>
+                        <div class="step-bar"><div class="step-fill"></div></div>
+                    </div>
+                    <div class="step" id="step-risk">
+                        <div class="step-icon">⚠️</div>
+                        <div class="step-info">
+                            <span class="step-label">Agent 3: Risk Analyzer</span>
+                            <span class="step-status">Waiting...</span>
+                        </div>
+                        <div class="step-bar"><div class="step-fill"></div></div>
+                    </div>
+                    <div class="step" id="step-report">
+                        <div class="step-icon">📊</div>
+                        <div class="step-info">
+                            <span class="step-label">Agent 4: Report Generator</span>
+                            <span class="step-status">Waiting...</span>
+                        </div>
+                        <div class="step-bar"><div class="step-fill"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Report Display -->
+            <div class="report-container" id="report-container" style="display:none">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- ─── History View ────────────────────────────────── -->
+        <section id="view-history" class="view" style="display:none">
+            <h2 class="view-title">Analysis History</h2>
+            <p class="section-desc">View previously analyzed contracts and their risk assessments.</p>
+            <div class="history-list" id="history-list">
+                <p class="empty-state">Loading past analyses...</p>
+            </div>
+        </section>
+
+        <!-- ─── CUAD Database View ──────────────────────────── -->
+        <section id="view-clause-db" class="view" style="display:none">
+            <h2 class="view-title">CUAD Clause Database</h2>
+            <p class="section-desc">The 41 clause types from the Contract Understanding Atticus Dataset (CUAD) used by our classifier. Click a card to view real training examples.</p>
+            <div class="search-wrapper">
+                <input type="text" class="clause-search" id="clause-search" placeholder="Search clause types...">
+            </div>
+            <div class="clause-grid" id="clause-grid">
+                <p class="empty-state">Loading clause types...</p>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-links">
+            <span>📚 <strong>CUAD Dataset</strong></span>
+            <span>🔗 <strong>LangGraph</strong></span>
+            <span>⚡ <strong>Groq LLM</strong></span>
+        </div>
+        <p>Prepared by Muhammad Abuzar Ejaz</p>
+    </footer>
+
+    <script src="/static/app.js?v=3"></script>
+</body>
+</html>

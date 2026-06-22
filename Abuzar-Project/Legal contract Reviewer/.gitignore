@@ -1,0 +1,29 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables (secret API keys)
+.env
+
+# Database file
+contract_review.db
+
+# Large dataset files
+cuad_data/
+
+# User uploads and generated reports
+uploads/
+reports/
+
+# IDE/System Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

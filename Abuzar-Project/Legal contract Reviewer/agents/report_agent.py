@@ -8,11 +8,9 @@ import json
 import re
 import time
 from datetime import datetime, timezone
-from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage, HumanMessage
 from agents.state import PipelineState
 from schemas.contract import ContractReport, IdentifiedClause, RiskAssessment
-from config import GROQ_API_KEY, GROQ_MODEL
+from config import call_llm
 
 
 def _extract_metadata(clauses: list[dict]) -> dict:
@@ -94,13 +92,7 @@ def report_agent(state: PipelineState) -> dict:
     risk_summary = ""
 
     if risks:
-        # Reduced max_tokens to 1024 to save pre-request check TPM quota
-        llm = ChatGroq(
-            model=GROQ_MODEL,
-            api_key=GROQ_API_KEY,
-            temperature=0.2,
-            max_tokens=1024,
-        )
+        # We will use call_llm to query Claude Opus 4.8 via the unlimited.surf gateway.
 
         # Build a concise risk digest for the LLM
         risk_digest = []
@@ -133,21 +125,23 @@ Key Risk Findings:
 
 Generate the executive summary, risk summary, and recommendations."""
 
-        max_retries = 3
-        backoff = 15.0
+        max_retries = 5
+        backoff = 3.0
         success = False
 
         for attempt in range(max_retries):
             try:
-                # Sleep briefly to throttle calls
-                time.sleep(2.0)
+                # Stagger calls politely
+                time.sleep(1.0)
 
-                response = llm.invoke([
-                    SystemMessage(content=system),
-                    HumanMessage(content=user),
-                ])
+                response_text = call_llm(
+                    system_prompt=system,
+                    user_prompt=user,
+                    temperature=0.2,
+                    max_tokens=1500
+                )
 
-                text = response.content.strip()
+                text = response_text.strip()
                 if text.startswith("```"):
                     text = re.sub(r"^```(?:json)?\s*", "", text)
                     text = re.sub(r"\s*```$", "", text)
@@ -166,24 +160,14 @@ Generate the executive summary, risk summary, and recommendations."""
                 break
 
             except Exception as exc:
-                exc_str = str(exc).lower()
-                if any(k in exc_str for k in ["rate_limit", "rate limit", "tpm", "rpm", "413", "429", "too large"]):
-                    print(f"  [Report Generator] Rate limit hit. Retrying in {backoff}s... (Attempt {attempt+1}/{max_retries})")
-                    time.sleep(backoff)
-                    backoff *= 2.0
-                else:
-                    print(f"\n[ERROR - Report Generator Agent] LLM invocation or parsing failed: {exc}")
+                print(f"  [Report Generator] Attempt {attempt+1} failed: {exc}")
+                time.sleep(backoff)
+                backoff *= 2.0
+                if attempt == max_retries - 1:
                     errors.append(f"Summary generation error: {exc}")
                     executive_summary = f"Contract analysis complete. Overall risk score: {overall_score}/10 with {high_count} high-risk clauses identified."
                     risk_summary = f"Risk score {overall_score}/10 — {'HIGH' if overall_score >= 7 else 'MODERATE' if overall_score >= 4 else 'LOW'} risk."
                     recommendations = ["Review all high-risk clauses with legal counsel before signing."]
-                    break
-
-        if not success and attempt == max_retries - 1:
-            errors.append(f"Summary generation failed after {max_retries} retries due to rate limits.")
-            executive_summary = f"Contract analysis complete. Overall risk score: {overall_score}/10 with {high_count} high-risk clauses identified."
-            risk_summary = f"Risk score {overall_score}/10 — {'HIGH' if overall_score >= 7 else 'MODERATE' if overall_score >= 4 else 'LOW'} risk."
-            recommendations = ["Review all high-risk clauses with legal counsel before signing."]
 
     else:
         executive_summary = "No clauses were identified in this document for risk assessment."

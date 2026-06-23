@@ -9,12 +9,10 @@ Anti-hallucination measures:
 import json
 import re
 import time
-from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage, HumanMessage
 from agents.state import PipelineState
 from database.connection import SessionLocal
 from database.models import ClauseType, ClauseExample
-from config import GROQ_API_KEY, GROQ_MODEL
+from config import call_llm
 
 # ── Clause-type metadata (duplicated from seed for offline access) ──────────
 CUAD_TYPES = {
@@ -192,6 +190,46 @@ def _validate_clauses(clauses: list[dict], source_text: str) -> list[dict]:
     return validated
 
 
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~1 token per 4 characters for English text."""
+    return len(text) // 4
+
+
+def _repair_truncated_json(text: str) -> str:
+    """Attempt to repair JSON that was truncated mid-output by the LLM.
+    
+    Common truncation patterns:
+      - Array cut off mid-object: [{...}, {"key": "val   → close string, object, array
+      - Missing closing brackets: [{...}, {...}          → add ]
+      - Trailing comma: [{...},]                         → remove comma before ]
+    """
+    text = text.strip()
+    if not text:
+        return text
+
+    # Remove any trailing incomplete key-value pair after last complete object
+    # Find the last complete object (ending with })
+    last_brace = text.rfind("}")
+    if last_brace == -1:
+        return text
+
+    # Truncate everything after the last complete closing brace
+    truncated = text[:last_brace + 1]
+
+    # Count brackets to see what's missing
+    open_brackets = truncated.count("[")
+    close_brackets = truncated.count("]")
+
+    # Remove trailing commas before we add closing brackets
+    truncated = truncated.rstrip().rstrip(",")
+
+    # Add missing closing brackets
+    for _ in range(open_brackets - close_brackets):
+        truncated += "]"
+
+    return truncated
+
+
 def classifier_agent(state: PipelineState) -> dict:
     """Agent 2 entry-point: classify contract text into CUAD clause types."""
 
@@ -210,20 +248,11 @@ def classifier_agent(state: PipelineState) -> dict:
     cuad_examples = _load_cuad_examples()
     print(f"  [Classifier] Loaded CUAD examples for {len(cuad_examples)} clause types")
 
-    # Reduced max_tokens to 1000 to save Groq TPM pre-request check quota
-    llm = ChatGroq(
-        model=GROQ_MODEL,
-        api_key=GROQ_API_KEY,
-        temperature=0.1,
-        max_tokens=1000,
-    )
-
     all_clauses: list[dict] = []
 
-    # Process in smaller overlapping chunks to stay within token-per-minute (TPM) limits
-    # and to ensure clauses crossing page boundaries are captured.
-    # Set chunk_size to 2 to minimize prompt size and fit within the 6,000 TPM limit.
-    chunk_size = 2
+    # Since we are using Claude Opus 4.8 via the unlimited.surf gateway, we can safely process 
+    # larger overlapping page chunks (e.g. chunk_size = 3, overlap = 1) without rate limit concerns.
+    chunk_size = 3
     overlap = 1
     chunks = []
     i = 0
@@ -234,7 +263,10 @@ def classifier_agent(state: PipelineState) -> dict:
             break
         i += chunk_size - overlap
 
-    for chunk in chunks:
+    total_chunks = len(chunks)
+    print(f"  [Classifier] Processing {total_chunks} chunks using Claude Opus 4.8...")
+
+    for chunk_idx, chunk in enumerate(chunks):
         page_range = f"Pages {chunk[0]['page']}-{chunk[-1]['page']}"
 
         # Build page-annotated text
@@ -247,22 +279,25 @@ def classifier_agent(state: PipelineState) -> dict:
 
         system_prompt, user_prompt = _build_prompt(chunk_text, page_range)
 
-        # Retry loop with exponential backoff to handle low TPM limits
-        max_retries = 3
-        backoff = 15.0  # Start with 15s wait on rate limit to let the window clear
+        # Retry loop with exponential backoff for general network issues
+        max_retries = 5
+        backoff = 3.0
         success = False
 
         for attempt in range(max_retries):
             try:
-                # Sleep between successful calls to throttle rate to ~6,000 TPM
-                time.sleep(8.0)
+                # Small delay to stagger calls politely
+                time.sleep(1.0)
 
-                response = llm.invoke([
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(content=user_prompt),
-                ])
+                # Call LLM helper
+                response_text = call_llm(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.1,
+                    max_tokens=3000
+                )
 
-                text = response.content.strip()
+                text = response_text.strip()
                 if text.startswith("```"):
                     text = re.sub(r"^```(?:json)?\s*", "", text)
                     text = re.sub(r"\s*```$", "", text)
@@ -273,30 +308,34 @@ def classifier_agent(state: PipelineState) -> dict:
                 if array_match:
                     text = array_match.group(0)
 
-                parsed = json.loads(text)
+                # Try parsing, and if it fails, attempt JSON repair
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    repaired = _repair_truncated_json(text)
+                    try:
+                        parsed = json.loads(repaired)
+                        print(f"  [Classifier] {page_range}: repaired truncated JSON")
+                    except json.JSONDecodeError:
+                        raise  # Re-raise so outer except catches it
+
                 if isinstance(parsed, list):
                     validated = _validate_clauses(parsed, chunk_text)
                     all_clauses.extend(validated)
                     print(f"  [Classifier] {page_range}: found {len(validated)} clauses")
                     success = True
                     break
+                else:
+                    print(f"  [Classifier] {page_range}: no clauses found")
+                    success = True
+                    break
 
             except Exception as exc:
-                exc_str = str(exc).lower()
-                # Detect rate limit or TPM exceeded errors
-                if any(k in exc_str for k in ["rate_limit", "rate limit", "tpm", "rpm", "413", "429", "too large"]):
-                    print(f"  [Classifier] Rate limit hit on {page_range}. Retrying in {backoff}s... (Attempt {attempt+1}/{max_retries})")
-                    time.sleep(backoff)
-                    backoff *= 2.0  # Exponential backoff
-                else:
-                    if isinstance(exc, json.JSONDecodeError):
-                        errors.append(f"JSON parse error on {page_range}: {exc}")
-                    else:
-                        errors.append(f"Classification error on {page_range}: {exc}")
-                    break
-        
-        if not success and attempt == max_retries - 1:
-            errors.append(f"Classification failed on {page_range} after {max_retries} retries due to rate limits.")
+                print(f"  [Classifier] Attempt {attempt+1} failed: {exc}")
+                time.sleep(backoff)
+                backoff *= 2.0
+                if attempt == max_retries - 1:
+                    errors.append(f"Classification failed on {page_range}: {exc}")
 
     # De-duplicate clauses (same type + very similar text)
     seen: set[str] = set()

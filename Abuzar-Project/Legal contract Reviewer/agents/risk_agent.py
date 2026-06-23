@@ -9,10 +9,8 @@ Each risk score is backed by:
 import json
 import re
 import time
-from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage, HumanMessage
 from agents.state import PipelineState
-from config import GROQ_API_KEY, GROQ_MODEL
+from config import call_llm
 
 # Predefined base-risk weights per clause type (grounded in legal practice)
 BASE_RISK: dict[str, dict] = {
@@ -74,25 +72,9 @@ def risk_agent(state: PipelineState) -> dict:
             "errors": errors,
         }
 
-    # Reduced max_tokens to 2048 to stay within Groq TPM limit checks
-    llm = ChatGroq(
-        model=GROQ_MODEL,
-        api_key=GROQ_API_KEY,
-        temperature=0.15,
-        max_tokens=2048,
-    )
+    # We will use call_llm to query Claude Opus 4.8 via the unlimited.surf gateway.
 
     # Build a compact clause summary for the LLM
-    clause_summaries = []
-    for idx, cl in enumerate(clauses):
-        clause_summaries.append({
-            "index": idx,
-            "clause_type": cl["clause_type"],
-            "text_excerpt": cl["text_excerpt"][:500],
-            "page": cl.get("page_number", 0),
-            "base_risk": BASE_RISK.get(cl["clause_type"], {}).get("category", "MEDIUM"),
-        })
-
     system_prompt = """You are a legal risk assessment specialist. You will be given a list of identified contract clauses.
 For EACH clause, you must:
 1. Assess how risky the SPECIFIC LANGUAGE is (not just the clause type in general).
@@ -116,71 +98,82 @@ Return ONLY a valid JSON array where each element is:
     "negotiation_tip": "<actionable suggestion>"
 }"""
 
-    user_prompt = f"""Analyze these contract clauses and assess risk for each one:
+    risk_assessments: list[dict] = []
+    
+    # Process in batches of 10 to prevent gateway timeouts (504) on large contracts
+    batch_size = 10
+    total_clauses = len(clauses)
+    
+    for start_idx in range(0, total_clauses, batch_size):
+        batch_clauses = clauses[start_idx : start_idx + batch_size]
+        batch_summaries = []
+        for idx, cl in enumerate(batch_clauses):
+            batch_summaries.append({
+                "index": start_idx + idx,
+                "clause_type": cl["clause_type"],
+                "text_excerpt": cl["text_excerpt"][:500],
+                "page": cl.get("page_number", 0),
+                "base_risk": BASE_RISK.get(cl["clause_type"], {}).get("category", "MEDIUM"),
+            })
+        
+        user_prompt = f"""Analyze these contract clauses (Batch {start_idx // batch_size + 1}) and assess risk for each one:
 
-{json.dumps(clause_summaries, indent=2)}
+{json.dumps(batch_summaries, indent=2)}
 
 Return ONLY the JSON array."""
 
-    risk_assessments: list[dict] = []
+        # Retry loop for general network robustness
+        max_retries = 5
+        backoff = 3.0
+        success = False
 
-    # Retry loop with exponential backoff for rate limits
-    max_retries = 3
-    backoff = 15.0
-    success = False
+        for attempt in range(max_retries):
+            try:
+                # Stagger calls politely
+                time.sleep(0.5)
 
-    for attempt in range(max_retries):
-        try:
-            # Short sleep before invocation to stagger calls
-            time.sleep(2.0)
+                response_text = call_llm(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.15,
+                    max_tokens=2500
+                )
 
-            response = llm.invoke([
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt),
-            ])
+                text = response_text.strip()
+                if text.startswith("```"):
+                    text = re.sub(r"^```(?:json)?\s*", "", text)
+                    text = re.sub(r"\s*```$", "", text)
+                text = text.strip()
 
-            text = response.content.strip()
-            if text.startswith("```"):
-                text = re.sub(r"^```(?:json)?\s*", "", text)
-                text = re.sub(r"\s*```$", "", text)
-            text = text.strip()
+                # Robust extraction: find the JSON array in the text
+                array_match = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
+                if array_match:
+                    text = array_match.group(0)
 
-            # Robust extraction: find the JSON array in the text
-            array_match = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
-            if array_match:
-                text = array_match.group(0)
+                parsed = json.loads(text)
 
-            parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        idx = item.get("index", -1)
+                        if 0 <= idx < len(clauses):
+                            source_clause = clauses[idx]
+                            risk_assessments.append({
+                                "clause_type": item.get("clause_type", source_clause["clause_type"]),
+                                "risk_level": item.get("risk_level", "MEDIUM"),
+                                "risk_score": max(1, min(10, int(item.get("risk_score", 5)))),
+                                "risk_rationale": item.get("risk_rationale", ""),
+                                "negotiation_tip": item.get("negotiation_tip", ""),
+                                "source_text": source_clause.get("text_excerpt", ""),
+                            })
+                    success = True
+                    break
 
-            if isinstance(parsed, list):
-                for item in parsed:
-                    idx = item.get("index", -1)
-                    if 0 <= idx < len(clauses):
-                        source_clause = clauses[idx]
-                        risk_assessments.append({
-                            "clause_type": item.get("clause_type", source_clause["clause_type"]),
-                            "risk_level": item.get("risk_level", "MEDIUM"),
-                            "risk_score": max(1, min(10, int(item.get("risk_score", 5)))),
-                            "risk_rationale": item.get("risk_rationale", ""),
-                            "negotiation_tip": item.get("negotiation_tip", ""),
-                            "source_text": source_clause.get("text_excerpt", ""),
-                        })
-                success = True
-                break
-
-        except Exception as exc:
-            exc_str = str(exc).lower()
-            if any(k in exc_str for k in ["rate_limit", "rate limit", "tpm", "rpm", "413", "429", "too large"]):
-                print(f"  [Risk Analyzer] Rate limit hit. Retrying in {backoff}s... (Attempt {attempt+1}/{max_retries})")
+            except Exception as exc:
+                print(f"  [Risk Analyzer] Batch start {start_idx} (Attempt {attempt+1}) failed: {exc}")
                 time.sleep(backoff)
                 backoff *= 2.0
-            else:
-                print(f"\n[ERROR - Risk Analyzer Agent] LLM invocation or parsing failed: {exc}")
-                errors.append(f"Risk analysis error: {exc}")
-                break
-
-    if not success and attempt == max_retries - 1:
-        errors.append(f"Risk analysis failed after {max_retries} retries due to rate limits.")
+                if attempt == max_retries - 1:
+                    errors.append(f"Risk analysis error for batch starting at {start_idx}: {exc}")
 
     # If LLM failed, generate rule-based fallback assessments
     if not risk_assessments:

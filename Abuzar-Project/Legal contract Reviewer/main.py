@@ -1,17 +1,5 @@
-"""FastAPI entry-point for the Multi-Agent Legal Contract Review System.
-
-Endpoints:
-  POST /api/upload              — upload a PDF contract, run the 4-agent pipeline
-  GET  /api/reports             — list all past analysis reports
-  GET  /api/reports/{id}        — retrieve a specific report
-  GET  /api/reports/{id}/download — download the Word report
-  GET  /api/clause-types        — list all 41 CUAD clause types
-  GET  /                        — serve the frontend
-"""
-
 import sys
 import json
-import shutil
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
@@ -21,7 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-# Ensure project root is on sys.path
+# Put project root into path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import UPLOAD_DIR, REPORTS_DIR, BASE_DIR
@@ -30,13 +18,14 @@ from database.models import ClauseType, ClauseExample, AnalyzedContract
 from agents.orchestrator import run_pipeline
 from reports.docx_generator import generate_docx_report
 
-# ── App setup ───────────────────────────────────────────────────────────
+# Initialize FastAPI application
 app = FastAPI(
     title="Multi-Agent Legal Contract Review System",
     description="Upload a PDF contract → get a structured risk analysis report powered by 4 AI agents and the CUAD dataset.",
     version="1.0.0",
 )
 
+# Enable CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,44 +33,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve frontend static files
+# Mount static files folder
 frontend_dir = BASE_DIR / "frontend"
 if frontend_dir.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
 
-
+# Initialize database on startup
 @app.on_event("startup")
 def startup():
     init_db()
     UPLOAD_DIR.mkdir(exist_ok=True)
     REPORTS_DIR.mkdir(exist_ok=True)
 
-
-# ── Routes ──────────────────────────────────────────────────────────────
-
+# Route for serving the frontend homepage
 @app.get("/", response_class=HTMLResponse)
 def serve_frontend():
-    """Serve the main frontend page."""
     index_path = frontend_dir / "index.html"
     if index_path.exists():
         return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
     return HTMLResponse(content="<h1>Frontend not found. Place index.html in /frontend/</h1>")
 
-
+# Route for returning favicon empty response
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     from fastapi import Response
     return Response(status_code=204)
 
-
-# In-memory dictionary to track pipeline background tasks
+# Keep track of active background tasks
 active_tasks = {}
 
-
+# Execute the review pipeline in a background task
 def run_pipeline_task(task_id: str, file_path: str, filename: str, timestamp: str):
-    """Background worker to run the multi-agent review pipeline."""
+    # Callback to transition between agent steps
     def status_callback(node_name: str, state: dict):
-        # Map the completed node to the next agent that is now running
         next_agent_map = {
             "parser": "classifier",
             "classifier": "risk_analyzer",
@@ -100,10 +84,9 @@ def run_pipeline_task(task_id: str, file_path: str, filename: str, timestamp: st
     try:
         result = run_pipeline(file_path, status_callback=status_callback)
         final_report = result.get("final_report", {})
-        status = result.get("status", "unknown")
         errors = result.get("errors", [])
 
-        # Save report as Word document
+        # Create Word document report
         safe_name = filename.replace(" ", "_")
         report_path = REPORTS_DIR / f"{timestamp}_{safe_name.replace('.pdf', '_report.docx')}"
         try:
@@ -111,7 +94,7 @@ def run_pipeline_task(task_id: str, file_path: str, filename: str, timestamp: st
         except Exception as exc:
             print(f"[Warning] DOCX generation failed: {exc}")
 
-        # Save to database
+        # Store analysis results in database
         db = SessionLocal()
         try:
             record = AnalyzedContract(
@@ -128,7 +111,6 @@ def run_pipeline_task(task_id: str, file_path: str, filename: str, timestamp: st
         finally:
             db.close()
 
-        # Mark task as completed
         active_tasks[task_id] = {
             "status": "complete",
             "current_agent": None,
@@ -146,15 +128,13 @@ def run_pipeline_task(task_id: str, file_path: str, filename: str, timestamp: st
             "errors": [str(exc)],
         }
 
-
+# Route for uploading contract PDF and initiating analysis
 @app.post("/api/upload")
 async def upload_contract(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    """Upload a PDF contract and trigger the analysis pipeline in the background."""
-
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
-    # Save uploaded file
+    # Save incoming upload file
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     safe_name = file.filename.replace(" ", "_")
     save_path = UPLOAD_DIR / f"{timestamp}_{safe_name}"
@@ -165,7 +145,7 @@ async def upload_contract(background_tasks: BackgroundTasks, file: UploadFile = 
 
     print(f"\n[Upload] Saved: {save_path} ({len(content)} bytes)")
 
-    # Generate a task ID
+    # Initialize a new active task
     task_id = str(uuid.uuid4())
     active_tasks[task_id] = {
         "status": "running",
@@ -174,7 +154,6 @@ async def upload_contract(background_tasks: BackgroundTasks, file: UploadFile = 
         "errors": [],
     }
 
-    # Queue the background pipeline execution
     background_tasks.add_task(
         run_pipeline_task,
         task_id,
@@ -188,18 +167,16 @@ async def upload_contract(background_tasks: BackgroundTasks, file: UploadFile = 
         "status": "queued"
     })
 
-
+# Route to get the progress status of a running task
 @app.get("/api/pipeline/status/{task_id}")
 def get_pipeline_status(task_id: str):
-    """Retrieve the real-time execution status of an active pipeline task."""
     if task_id not in active_tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     return active_tasks[task_id]
 
-
+# Route to get all past analysis reports
 @app.get("/api/reports")
 def list_reports():
-    """List all previously analyzed contracts."""
     db = SessionLocal()
     try:
         records = db.query(AnalyzedContract).order_by(AnalyzedContract.upload_date.desc()).all()
@@ -216,10 +193,9 @@ def list_reports():
     finally:
         db.close()
 
-
+# Route to fetch detailed JSON for a single report
 @app.get("/api/reports/{report_id}")
 def get_report(report_id: int):
-    """Retrieve a specific analysis report by ID."""
     db = SessionLocal()
     try:
         record = db.query(AnalyzedContract).filter(AnalyzedContract.id == report_id).first()
@@ -229,10 +205,9 @@ def get_report(report_id: int):
     finally:
         db.close()
 
-
+# Route to download generated docx file
 @app.get("/api/reports/{report_id}/download")
 def download_report(report_id: int):
-    """Generate and download a Word (.docx) report for a specific analysis."""
     db = SessionLocal()
     try:
         record = db.query(AnalyzedContract).filter(AnalyzedContract.id == report_id).first()
@@ -250,9 +225,9 @@ def download_report(report_id: int):
     finally:
         db.close()
 
+# Route to list all CUAD clause types
 @app.get("/api/clause-types")
 def list_clause_types():
-    """List all 41 CUAD clause types stored in the database."""
     db = SessionLocal()
     try:
         types = db.query(ClauseType).order_by(ClauseType.id).all()
@@ -269,10 +244,9 @@ def list_clause_types():
     finally:
         db.close()
 
-
+# Route to retrieve training examples for a specific clause type
 @app.get("/api/clause-examples/{clause_type_id}")
 def get_clause_examples(clause_type_id: int, limit: int = 10):
-    """Return CUAD example text spans for a specific clause type."""
     db = SessionLocal()
     try:
         ct = db.query(ClauseType).filter(ClauseType.id == clause_type_id).first()
@@ -299,10 +273,9 @@ def get_clause_examples(clause_type_id: int, limit: int = 10):
     finally:
         db.close()
 
-
+# Route to get system statistics
 @app.get("/api/stats")
 def get_stats():
-    """Return dashboard statistics."""
     db = SessionLocal()
     try:
         total_clause_types = db.query(ClauseType).count()
@@ -316,12 +289,7 @@ def get_stats():
     finally:
         db.close()
 
-
-# ── Run with uvicorn ────────────────────────────────────────────────────
+# Start application server locally
 if __name__ == "__main__":
     import uvicorn
-    print("\n" + "=" * 60)
-    print("  MULTI-AGENT LEGAL CONTRACT REVIEW SYSTEM")
-    print("  Starting server at http://localhost:8000")
-    print("=" * 60 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)

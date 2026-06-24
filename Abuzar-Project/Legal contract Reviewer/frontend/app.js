@@ -1,11 +1,43 @@
-/**
- * LegalLens — Premium Frontend Application
- * Dark glassmorphism UI with CUAD integration, search, and animated pipeline.
- */
-
 const API = '';
 
-// ─── Stats Bar ─────────────────────────────────────────────
+// Run warning screen countdown on page load
+function startWarningCountdown() {
+    const warningScreen = document.getElementById('warning-screen');
+    const timerEl = document.getElementById('countdown-timer');
+    const progressEl = document.getElementById('countdown-progress');
+    if (!warningScreen || !timerEl || !progressEl) return;
+
+    let timeLeft = 7;
+    timerEl.textContent = timeLeft;
+
+    const dismissWarning = () => {
+        clearInterval(interval);
+        warningScreen.classList.add('hidden');
+        setTimeout(() => {
+            warningScreen.style.display = 'none';
+        }, 500);
+    };
+
+    const skipBtn = document.getElementById('skip-warning-btn');
+    if (skipBtn) {
+        skipBtn.addEventListener('click', dismissWarning);
+    }
+
+    const interval = setInterval(() => {
+        timeLeft--;
+        timerEl.textContent = timeLeft;
+        progressEl.style.width = `${((7 - timeLeft) / 7) * 100}%`;
+
+        if (timeLeft <= 0) {
+            dismissWarning();
+        }
+    }, 1000);
+}
+
+// Start countdown
+startWarningCountdown();
+
+// Load statistics from database
 async function loadStats() {
     try {
         const res = await fetch(`${API}/api/stats`);
@@ -20,6 +52,7 @@ async function loadStats() {
     }
 }
 
+// Animate numbers counting up
 function animateCounter(id, target) {
     const el = document.getElementById(id);
     if (!el || target === 0) { el.textContent = target; return; }
@@ -32,9 +65,10 @@ function animateCounter(id, target) {
     }, 30);
 }
 
+// Initialize stats loader
 loadStats();
 
-// ─── Navigation ────────────────────────────────────────────
+// Set up page navigation buttons
 document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const view = btn.dataset.view;
@@ -54,15 +88,23 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     });
 });
 
+// Set default view on load
 document.getElementById('view-upload').style.display = 'block';
 
-// ─── File Upload ───────────────────────────────────────────
+// Get elements for drag and drop
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 
+// Handle click trigger for file upload
 dropZone.addEventListener('click', () => fileInput.click());
+
+// Handle dragover hover effect
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+
+// Handle dragleave hover removal
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+
+// Handle dropped files
 dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
@@ -70,8 +112,11 @@ dropZone.addEventListener('drop', e => {
     if (file && file.name.toLowerCase().endsWith('.pdf')) uploadFile(file);
     else showError('Please upload a PDF file.');
 });
+
+// Handle file input selection change
 fileInput.addEventListener('change', () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
 
+// Upload selected contract PDF file to server
 async function uploadFile(file) {
     const progress = document.getElementById('pipeline-progress');
     const reportContainer = document.getElementById('report-container');
@@ -86,7 +131,7 @@ async function uploadFile(file) {
         'report_generator': 'Agent 4: Compiling executive summary and Word report...'
     };
 
-    // Reset progress UI
+    // Reset progress items in UI
     steps.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -96,7 +141,7 @@ async function uploadFile(file) {
         }
     });
 
-    // Make parser active on start
+    // Make first agent step active
     const parserEl = document.getElementById('step-parser');
     if (parserEl) {
         parserEl.classList.add('active');
@@ -108,7 +153,7 @@ async function uploadFile(file) {
     formData.append('file', file);
 
     try {
-        // 1. Upload contract to get task_id
+        // Send file upload POST request
         const res = await fetch(`${API}/api/upload`, { method: 'POST', body: formData });
         if (!res.ok) {
             const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
@@ -118,11 +163,11 @@ async function uploadFile(file) {
         const uploadData = await res.json();
         const taskId = uploadData.task_id;
 
-        // 2. Poll status endpoint until completed or failed
         let pollCount = 0;
-        const maxPolls = 300; // 5 minutes max
-        const pollInterval = 1500; // poll every 1.5 seconds
+        const maxPolls = 300;
+        const pollInterval = 1500;
 
+        // Poll pipeline status in a loop
         const pollStatus = async () => {
             if (pollCount >= maxPolls) {
                 throw new Error('Pipeline analysis timed out. Please try again.');
@@ -137,11 +182,11 @@ async function uploadFile(file) {
             const task = await statusRes.json();
 
             if (task.status === 'running') {
-                const currentAgent = task.current_agent; // e.g., 'parser', 'classifier', 'risk_analyzer', 'report_generator'
+                const currentAgent = task.current_agent;
                 updateProgressUI(currentAgent);
                 setTimeout(pollStatus, pollInterval);
             } else if (task.status === 'complete') {
-                // Complete all steps in UI
+                // Mark all steps complete
                 steps.forEach(id => {
                     const el = document.getElementById(id);
                     if (el) {
@@ -164,7 +209,7 @@ async function uploadFile(file) {
             }
         };
 
-        // Start polling
+        // Start polling task progress
         setTimeout(pollStatus, pollInterval);
 
     } catch (err) {
@@ -173,6 +218,7 @@ async function uploadFile(file) {
     }
 }
 
+// Update pipeline step progress indicators in UI
 function updateProgressUI(currentAgent) {
     const steps = ['step-parser', 'step-classifier', 'step-risk', 'step-report'];
     const agentMap = {
@@ -190,13 +236,13 @@ function updateProgressUI(currentAgent) {
         if (!el) continue;
 
         if (i < activeIdx) {
-            // Completed steps
+            // Update completed steps
             el.classList.remove('active');
             el.classList.add('done');
             el.querySelector('.step-status').textContent = 'Complete ✓';
             el.querySelector('.step-fill').style.width = '100%';
         } else if (i === activeIdx) {
-            // Currently active step
+            // Update active step
             el.classList.remove('done');
             el.classList.add('active');
             
@@ -210,7 +256,7 @@ function updateProgressUI(currentAgent) {
             el.querySelector('.step-status').textContent = statusTexts[steps[i]];
             el.querySelector('.step-fill').style.width = '50%';
         } else {
-            // Pending steps
+            // Update waiting steps
             el.classList.remove('active', 'done');
             el.querySelector('.step-status').textContent = 'Waiting...';
             el.querySelector('.step-fill').style.width = '0%';
@@ -218,7 +264,7 @@ function updateProgressUI(currentAgent) {
     }
 }
 
-// ─── Report Rendering ──────────────────────────────────────
+// Render generated report data inside container
 function renderReport(report, reportId) {
     const container = document.getElementById('report-container');
     container.style.display = 'block';
@@ -305,6 +351,13 @@ function renderReport(report, reportId) {
                     <tbody>${clauseRows}</tbody>
                 </table>
             </div>
+            <div class="confidence-info-box">
+                <span class="info-icon">💡</span>
+                <div class="info-text">
+                    <strong>What is a Confidence Score?</strong> 
+                    <span>This represents the AI's mathematical certainty (from 0% to 100%) that the detected clause matches the definition of that clause type under the CUAD standard. High confidence indicates a strong match, while low confidence suggests the text warrants closer human inspection.</span>
+                </div>
+            </div>
         </div>` : ''}
         ${recItems ? `
         <div class="report-section">
@@ -316,6 +369,7 @@ function renderReport(report, reportId) {
     window._lastReport = report;
 }
 
+// Download report Word file
 function downloadReport() {
     const id = window._lastReportId;
     if (!id) { showError('No report to download.'); return; }
@@ -325,7 +379,7 @@ function downloadReport() {
     a.click();
 }
 
-// ─── History ───────────────────────────────────────────────
+// Load analysis history from backend
 async function loadHistory() {
     const list = document.getElementById('history-list');
     list.innerHTML = '<p class="empty-state">Loading...</p>';
@@ -353,6 +407,7 @@ async function loadHistory() {
     }
 }
 
+// Load specific report from history list selection
 async function loadHistoryReport(id) {
     try {
         const res = await fetch(`${API}/api/reports/${id}`);
@@ -370,9 +425,10 @@ async function loadHistoryReport(id) {
     }
 }
 
-// ─── Clause Types (CUAD Database) ──────────────────────────
+// Track clause data array
 let _clauseData = [];
 
+// Load clause types database on request
 async function loadClauseTypes() {
     const grid = document.getElementById('clause-grid');
     grid.innerHTML = '<p class="empty-state">Loading CUAD clause types...</p>';
@@ -381,7 +437,7 @@ async function loadClauseTypes() {
         const data = await res.json();
         _clauseData = data;
         if (!data.length) {
-            grid.innerHTML = '<p class="empty-state">No clause types found. Run <code>python setup_cuad.py</code> first.</p>';
+            grid.innerHTML = '<p class="empty-state">No clause types found.</p>';
             return;
         }
         renderClauseGrid(data);
@@ -390,6 +446,7 @@ async function loadClauseTypes() {
     }
 }
 
+// Render grid layout for CUAD clauses list
 function renderClauseGrid(data) {
     const grid = document.getElementById('clause-grid');
     grid.innerHTML = data.map(ct => `
@@ -405,6 +462,7 @@ function renderClauseGrid(data) {
     `).join('');
 }
 
+// Expand or collapse training examples for clause cards
 async function toggleExamples(card, clauseId) {
     const container = document.getElementById(`examples-${clauseId}`);
     if (container.classList.contains('open')) {
@@ -421,7 +479,7 @@ async function toggleExamples(card, clauseId) {
                     <p>"${esc(ex.text_span)}"<span class="ex-source">— ${esc(ex.source_contract)}</span></p>
                 `).join('');
             } else {
-                container.innerHTML = '<p>No examples available. Run setup_cuad.py to seed the dataset.</p>';
+                container.innerHTML = '<p>No examples available.</p>';
             }
         } catch (e) {
             container.innerHTML = '<p>Failed to load examples.</p>';
@@ -430,7 +488,7 @@ async function toggleExamples(card, clauseId) {
     container.classList.add('open');
 }
 
-// Clause search
+// Enable filtering of clause list by search query
 const searchInput = document.getElementById('clause-search');
 if (searchInput) {
     searchInput.addEventListener('input', () => {
@@ -445,12 +503,13 @@ if (searchInput) {
     });
 }
 
-// ─── Utilities ─────────────────────────────────────────────
+// Escape special characters to prevent HTML injection
 function esc(str) {
     if (!str) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Show error messages as toast notifications
 function showError(msg) {
     const toast = document.createElement('div');
     toast.className = 'error-toast';

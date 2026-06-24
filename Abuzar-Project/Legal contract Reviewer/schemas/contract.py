@@ -1,44 +1,36 @@
-"""Pydantic models that enforce the structured JSON output schema."""
-
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
-
+# Structured Pydantic model for clause findings
 class IdentifiedClause(BaseModel):
-    """A single clause identified in the contract, grounded in the actual text."""
-    clause_type: str = Field(..., description="One of the 41 CUAD clause types")
-    text_excerpt: str = Field(..., description="EXACT verbatim text quoted from the contract")
-    page_number: int = Field(..., ge=1, description="Page where the clause appears")
-    section: str = Field(default="", description="Section or paragraph reference")
-    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+    clause_type: str = Field(description="The matching type out of the 41 CUAD classes")
+    text_excerpt: str = Field(description="The verbatim contract excerpt")
+    page_number: int = Field(description="1-based page number where found")
+    section: Optional[str] = Field(None, description="Section heading or title")
+    confidence: float = Field(description="AI classification probability rating (0.0 to 1.0)")
 
-
+# Structured Pydantic model for risk assessments
 class RiskAssessment(BaseModel):
-    """Risk evaluation for a specific identified clause."""
-    clause_type: str = Field(..., description="The CUAD clause type being assessed")
-    risk_level: str = Field(..., description="HIGH, MEDIUM, or LOW")
-    risk_score: int = Field(..., ge=1, le=10, description="Risk severity from 1 (safe) to 10 (dangerous)")
-    risk_rationale: str = Field(..., description="Clear explanation of why this clause is risky")
-    negotiation_tip: str = Field(..., description="Actionable suggestion for negotiating this clause")
-    source_text: str = Field(..., description="The clause text that triggered this risk flag")
+    clause_type: str = Field(description="CUAD clause type name")
+    source_text: str = Field(description="Verification source excerpt")
+    page_number: int = Field(description="Page location index")
+    risk_score: int = Field(description="Assessment risk value rating (1 to 10)")
+    risk_level: str = Field(description="Risk classification level (LOW / MEDIUM / HIGH)")
+    risk_rationale: str = Field(description="Summary detailing the evaluated risks")
+    negotiation_tip: str = Field(description="Actionable mitigation suggestions")
 
-
-class ContractReport(BaseModel):
-    """The final structured report — the system's main output."""
-    document_name: str = Field(default="Unknown Contract")
-    parties: List[str] = Field(default_factory=list)
-    agreement_date: Optional[str] = None
-    effective_date: Optional[str] = None
-    governing_law: Optional[str] = None
-    overall_risk_score: float = Field(..., ge=1.0, le=10.0)
-    risk_summary: str = Field(default="", description="One-line risk verdict")
-    total_clauses_found: int = Field(default=0)
-    high_risk_count: int = Field(default=0)
-    medium_risk_count: int = Field(default=0)
-    low_risk_count: int = Field(default=0)
-    identified_clauses: List[IdentifiedClause] = Field(default_factory=list)
-    risk_assessments: List[RiskAssessment] = Field(default_factory=list)
-    executive_summary: str = Field(default="")
-    recommendations: List[str] = Field(default_factory=list)
-    analysis_timestamp: str = Field(default="")
-    page_count: int = Field(default=0)
+# Structured Pydantic model for finalized report payload
+class ContractAnalysisReport(BaseModel):
+    document_name: str = Field(description="Formal title of contract or derived filename")
+    parties: List[str] = Field(description="Detected signing contract entities list")
+    agreement_date: Optional[str] = Field(None, description="Effective or signing agreement date")
+    governing_law: Optional[str] = Field(None, description="Jurisdictional governing legal territory")
+    executive_summary: str = Field(description="Summary report detail statements")
+    risk_summary: str = Field(description="High-level risk rating summary sentence")
+    overall_risk_score: float = Field(description="Average mathematical risk calculation")
+    high_risk_count: int = Field(description="Number of high risk findings")
+    medium_risk_count: int = Field(description="Number of medium risk findings")
+    low_risk_count: int = Field(description="Number of low risk findings")
+    analysis_timestamp: str = Field(description="ISO report compilation date stamp")
+    identified_clauses: List[IdentifiedClause] = Field(description="List of detected clauses")
+    risk_assessments: List[RiskAssessment] = Field(description="List of evaluated risk findings")

@@ -1,11 +1,3 @@
-"""Agent 2 — The Classifier: Identifies and categorises clauses using the 41 CUAD types.
-
-Anti-hallucination measures:
-  1. CUAD examples are loaded from the database and included as few-shot context.
-  2. The LLM is instructed to quote EXACT text from the contract.
-  3. Post-validation verifies every quoted span actually exists in the source document.
-"""
-
 import json
 import re
 import time
@@ -14,7 +6,7 @@ from database.connection import SessionLocal
 from database.models import ClauseType, ClauseExample
 from config import call_llm
 
-# ── Clause-type metadata (duplicated from seed for offline access) ──────────
+# Predefined metadata list of 41 CUAD types
 CUAD_TYPES = {
     "Document Name": "The name or title of the contract/agreement.",
     "Parties": "The names of the contracting parties.",
@@ -59,9 +51,8 @@ CUAD_TYPES = {
     "Third Party Beneficiary": "Rights granted to non-signatory parties.",
 }
 
-
+# Fetch training examples per clause type
 def _load_cuad_examples() -> dict[str, list[str]]:
-    """Load a few example text spans per clause type from the database."""
     db = SessionLocal()
     try:
         examples: dict[str, list[str]] = {}
@@ -78,11 +69,8 @@ def _load_cuad_examples() -> dict[str, list[str]]:
     finally:
         db.close()
 
-
+# Generate classification prompt from contract chunk and page range
 def _build_prompt(contract_chunk: str, page_range: str) -> tuple[str, str]:
-    """Build system + user prompts for clause classification without few-shot examples to fit token limits."""
-
-    # List of 41 clause types (names only without descriptions to save ~600 tokens)
     clause_ref = ", ".join(list(CUAD_TYPES.keys()))
 
     system = f"""You are a legal contract clause classifier.
@@ -117,10 +105,8 @@ Return ONLY the JSON array."""
 
     return system, user
 
-
+# Verify if identified quotes exist in the source document
 def _validate_clauses(clauses: list[dict], source_text: str) -> list[dict]:
-    """Post-validate: ensure every quoted excerpt genuinely appears in the source."""
-    # Normalize whitespaces and lowercase the source text for comparison
     source_clean = re.sub(r"\s+", " ", source_text).lower()
     validated: list[dict] = []
 
@@ -129,31 +115,29 @@ def _validate_clauses(clauses: list[dict], source_text: str) -> list[dict]:
         if not excerpt or len(excerpt) < 3:
             continue
 
-        # Validate clause type is one of the 41
         if cl.get("clause_type") not in CUAD_TYPES:
             continue
 
-        # Normalize whitespaces and lowercase the excerpt for comparison
         excerpt_clean = re.sub(r"\s+", " ", excerpt).lower()
         words = excerpt_clean.split()
         if not words:
             continue
 
-        # 1. Check the first 8 words
+        # Look for first 8 words in source
         check_len = min(8, len(words))
         check_phrase = " ".join(words[:check_len])
         if check_phrase in source_clean:
             validated.append(cl)
             continue
 
-        # 2. Try first 4 words with lower confidence
+        # Look for first 4 words in source
         short_phrase = " ".join(words[:min(4, len(words))])
         if short_phrase in source_clean:
             cl["confidence"] = round(max(0.3, cl.get("confidence", 0.5) - 0.2), 2)
             validated.append(cl)
             continue
 
-        # 3. Try the last 8 words
+        # Look for last 8 words in source
         if len(words) >= 8:
             last_phrase = " ".join(words[-8:])
             if last_phrase in source_clean:
@@ -161,7 +145,7 @@ def _validate_clauses(clauses: list[dict], source_text: str) -> list[dict]:
                 validated.append(cl)
                 continue
 
-        # 4. Try any 8-word sliding window (for large clauses with minor differences/paraphrases)
+        # Check sliding 8-word chunks
         if len(words) > 8:
             matched_window = False
             for start_idx in range(len(words) - 7):
@@ -174,7 +158,7 @@ def _validate_clauses(clauses: list[dict], source_text: str) -> list[dict]:
             if matched_window:
                 continue
 
-        # 5. Try any 5-word sliding window for shorter excerpts
+        # Check sliding 5-word chunks
         if 5 <= len(words) <= 7:
             matched_window = False
             for start_idx in range(len(words) - 4):
@@ -189,69 +173,49 @@ def _validate_clauses(clauses: list[dict], source_text: str) -> list[dict]:
 
     return validated
 
-
+# Calculate rough token count
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate: ~1 token per 4 characters for English text."""
     return len(text) // 4
 
-
+# Repair JSON string cut off during generation
 def _repair_truncated_json(text: str) -> str:
-    """Attempt to repair JSON that was truncated mid-output by the LLM.
-    
-    Common truncation patterns:
-      - Array cut off mid-object: [{...}, {"key": "val   → close string, object, array
-      - Missing closing brackets: [{...}, {...}          → add ]
-      - Trailing comma: [{...},]                         → remove comma before ]
-    """
     text = text.strip()
     if not text:
         return text
 
-    # Remove any trailing incomplete key-value pair after last complete object
-    # Find the last complete object (ending with })
     last_brace = text.rfind("}")
     if last_brace == -1:
         return text
 
-    # Truncate everything after the last complete closing brace
     truncated = text[:last_brace + 1]
-
-    # Count brackets to see what's missing
     open_brackets = truncated.count("[")
     close_brackets = truncated.count("]")
-
-    # Remove trailing commas before we add closing brackets
     truncated = truncated.rstrip().rstrip(",")
 
-    # Add missing closing brackets
+    # Append missing close brackets
     for _ in range(open_brackets - close_brackets):
         truncated += "]"
 
     return truncated
 
-
+# Process and classify text paragraphs
 def classifier_agent(state: PipelineState) -> dict:
-    """Agent 2 entry-point: classify contract text into CUAD clause types."""
-
     if state.get("status") == "parse_error":
         return {"identified_clauses": [], "status": "classification_error"}
 
     cleaned_pages = state.get("cleaned_pages", [])
-    raw_text = state.get("raw_text", "")
     errors: list[str] = list(state.get("errors", []))
 
     if not cleaned_pages:
         errors.append("No text available for classification")
         return {"identified_clauses": [], "status": "classification_error", "errors": errors}
 
-    # Load CUAD examples from database
     cuad_examples = _load_cuad_examples()
     print(f"  [Classifier] Loaded CUAD examples for {len(cuad_examples)} clause types")
 
     all_clauses: list[dict] = []
 
-    # Since we are using Claude Opus 4.8 via the unlimited.surf gateway, we can safely process 
-    # larger overlapping page chunks (e.g. chunk_size = 3, overlap = 1) without rate limit concerns.
+    # Configure pagination chunks for pipeline execution
     chunk_size = 3
     overlap = 1
     chunks = []
@@ -269,7 +233,7 @@ def classifier_agent(state: PipelineState) -> dict:
     for chunk_idx, chunk in enumerate(chunks):
         page_range = f"Pages {chunk[0]['page']}-{chunk[-1]['page']}"
 
-        # Build page-annotated text
+        # Combine page chunks into single body
         chunk_text = ""
         for p in chunk:
             chunk_text += f"\n--- PAGE {p['page']} ---\n{p['text']}\n"
@@ -279,17 +243,15 @@ def classifier_agent(state: PipelineState) -> dict:
 
         system_prompt, user_prompt = _build_prompt(chunk_text, page_range)
 
-        # Retry loop with exponential backoff for general network issues
         max_retries = 5
         backoff = 3.0
         success = False
 
+        # Attempt API calls with retries
         for attempt in range(max_retries):
             try:
-                # Small delay to stagger calls politely
                 time.sleep(1.0)
 
-                # Call LLM helper
                 response_text = call_llm(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
@@ -303,12 +265,11 @@ def classifier_agent(state: PipelineState) -> dict:
                     text = re.sub(r"\s*```$", "", text)
                 text = text.strip()
 
-                # Robust extraction: find the JSON array in the text
                 array_match = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
                 if array_match:
                     text = array_match.group(0)
 
-                # Try parsing, and if it fails, attempt JSON repair
+                # Parse and repair JSON content
                 try:
                     parsed = json.loads(text)
                 except json.JSONDecodeError:
@@ -317,7 +278,7 @@ def classifier_agent(state: PipelineState) -> dict:
                         parsed = json.loads(repaired)
                         print(f"  [Classifier] {page_range}: repaired truncated JSON")
                     except json.JSONDecodeError:
-                        raise  # Re-raise so outer except catches it
+                        raise
 
                 if isinstance(parsed, list):
                     validated = _validate_clauses(parsed, chunk_text)
@@ -337,11 +298,10 @@ def classifier_agent(state: PipelineState) -> dict:
                 if attempt == max_retries - 1:
                     errors.append(f"Classification failed on {page_range}: {exc}")
 
-    # De-duplicate clauses (same type + very similar text)
+    # Remove duplicate matching clauses
     seen: set[str] = set()
     unique_clauses: list[dict] = []
     for cl in all_clauses:
-        # Normalize whitespace for comparison
         norm_excerpt = re.sub(r"\s+", " ", cl["text_excerpt"]).strip().lower()
         key = f"{cl['clause_type']}::{norm_excerpt[:80]}"
         if key not in seen:

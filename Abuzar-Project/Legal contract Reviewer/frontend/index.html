@@ -6,11 +6,34 @@
     <title>LegalLens — Multi-Agent Contract Review System</title>
     <meta name="description" content="Upload a legal contract and receive an AI-powered risk analysis report using 4 specialized agents and the CUAD dataset.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
-    <!-- ─── Header ──────────────────────────────────────────── -->
+    <!-- Full-screen warning screen before accessing the main page -->
+    <div id="warning-screen">
+        <div class="warning-card">
+            <div class="warning-icon-wrapper">
+                <svg class="warning-svg" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+            </div>
+            <h2>AI Disclaimer & Notice</h2>
+            <p class="warning-subtitle">For Predictions & Suggestions Only</p>
+            <p class="warning-description">LegalLens leverages specialized AI agents to extract and analyze contract language. Because language models can make mistakes, this analysis does not constitute formal legal advice. Always verify crucial clauses with certified legal counsel.</p>
+            <div class="countdown-container">
+                <div class="countdown-bar">
+                    <div class="countdown-progress" id="countdown-progress"></div>
+                </div>
+                <div class="countdown-footer">
+                    <span class="countdown-text">Entering in <span id="countdown-timer">7</span>s...</span>
+                    <button id="skip-warning-btn" class="skip-btn">Acknowledge & Proceed &rarr;</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main header of the application -->
     <header id="app-header">
         <div class="header-inner">
             <div class="logo">
@@ -29,7 +52,7 @@
     </header>
 
     <main id="app-main">
-        <!-- ─── Stats Bar ─────────────────────────────────────── -->
+        <!-- Dashboard statistics cards -->
         <div class="stats-bar" id="stats-bar">
             <div class="stat-card">
                 <div class="stat-value" id="stat-clauses">—</div>
@@ -49,9 +72,10 @@
             </div>
         </div>
 
-        <!-- ─── Upload View ─────────────────────────────────── -->
+        <!-- Section for uploading contract files -->
         <section id="view-upload" class="view active">
             <div class="upload-hero">
+                <h1 class="elegant-tab-title">LegalLens</h1>
                 <h2>Analyze Your Contract</h2>
                 <p>Upload a PDF contract and our 4-agent AI pipeline will identify clauses, assess risks, and generate a structured report powered by the CUAD dataset.</p>
             </div>
@@ -63,7 +87,7 @@
                 <input type="file" id="file-input" accept=".pdf" hidden>
             </div>
 
-            <!-- Pipeline Progress -->
+            <!-- Pipeline progress indicator while processing -->
             <div class="pipeline-progress" id="pipeline-progress" style="display:none">
                 <h3>🔄 Pipeline Running...</h3>
                 <div class="pipeline-steps">
@@ -102,13 +126,12 @@
                 </div>
             </div>
 
-            <!-- Report Display -->
+            <!-- Container for displaying the completed report -->
             <div class="report-container" id="report-container" style="display:none">
-                <!-- Populated by JS -->
             </div>
         </section>
 
-        <!-- ─── History View ────────────────────────────────── -->
+        <!-- Section for displaying analysis history -->
         <section id="view-history" class="view" style="display:none">
             <h2 class="view-title">Analysis History</h2>
             <p class="section-desc">View previously analyzed contracts and their risk assessments.</p>
@@ -117,7 +140,7 @@
             </div>
         </section>
 
-        <!-- ─── CUAD Database View ──────────────────────────── -->
+        <!-- Section for exploring CUAD clause database -->
         <section id="view-clause-db" class="view" style="display:none">
             <h2 class="view-title">CUAD Clause Database</h2>
             <p class="section-desc">The 41 clause types from the Contract Understanding Atticus Dataset (CUAD) used by our classifier. Click a card to view real training examples.</p>
@@ -130,6 +153,7 @@
         </section>
     </main>
 
+    <!-- Footer of the page -->
     <footer>
         <div class="footer-links">
             <span>📚 <strong>CUAD Dataset</strong></span>
@@ -139,6 +163,6 @@
         <p>Prepared by Muhammad Abuzar Ejaz</p>
     </footer>
 
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=4"></script>
 </body>
 </html>

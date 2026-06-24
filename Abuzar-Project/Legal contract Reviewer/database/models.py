@@ -1,5 +1,4 @@
-"""SQLAlchemy ORM models for the contract review database."""
-
+# SQLAlchemy ORM models for the contract review database
 from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime, timezone
@@ -7,8 +6,8 @@ from datetime import datetime, timezone
 Base = declarative_base()
 
 
+# The 41 CUAD clause types with descriptions and risk categories
 class ClauseType(Base):
-    """The 41 CUAD clause types with descriptions and risk categories."""
     __tablename__ = "clause_types"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -19,8 +18,8 @@ class ClauseType(Base):
     examples = relationship("ClauseExample", back_populates="clause_type", cascade="all, delete-orphan")
 
 
+# CUAD-annotated example text spans for each clause type
 class ClauseExample(Base):
-    """CUAD-annotated example text spans for each clause type."""
     __tablename__ = "clause_examples"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -31,8 +30,8 @@ class ClauseExample(Base):
     clause_type = relationship("ClauseType", back_populates="examples")
 
 
+# Records of contracts that have been analyzed
 class AnalyzedContract(Base):
-    """Records of contracts that have been analyzed."""
     __tablename__ = "analyzed_contracts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)

@@ -1,206 +1,136 @@
-"""Agent 4 — The Report Generator: Assembles the final structured JSON report.
-
-All data comes from prior agents. The LLM is used ONLY to generate the
-executive summary and recommendations — everything else is deterministic assembly.
-"""
-
 import json
 import re
 import time
 from datetime import datetime, timezone
 from agents.state import PipelineState
-from schemas.contract import ContractReport, IdentifiedClause, RiskAssessment
 from config import call_llm
 
-
-def _extract_metadata(clauses: list[dict]) -> dict:
-    """Pull document metadata from identified clauses."""
-    meta: dict = {
-        "document_name": "Unknown Contract",
-        "parties": [],
-        "agreement_date": None,
-        "effective_date": None,
-        "governing_law": None,
+# Build prompt for summarization and meta-extraction
+def _build_prompt(state_dict: dict) -> tuple[str, str]:
+    meta_info = {
+        "file_path": state_dict.get("file_path", ""),
+        "page_count": state_dict.get("page_count", 0),
+        "overall_risk_score": state_dict.get("overall_risk_score", 0.0),
+        "identified_clauses_count": len(state_dict.get("identified_clauses", [])),
     }
 
-    for cl in clauses:
-        ct = cl.get("clause_type", "")
-        text = cl.get("text_excerpt", "")
+    risks_subset = []
+    for r in state_dict.get("risk_assessments", []):
+        risks_subset.append({
+            "clause_type": r.get("clause_type"),
+            "risk_score": r.get("risk_score"),
+            "risk_level": r.get("risk_level"),
+            "risk_rationale": r.get("risk_rationale", "")[:200],
+        })
 
-        if ct == "Document Name" and text:
-            meta["document_name"] = text[:200]
-        elif ct == "Parties" and text:
-            meta["parties"].append(text[:300])
-        elif ct == "Agreement Date" and text:
-            meta["agreement_date"] = text[:100]
-        elif ct == "Effective Date" and text:
-            meta["effective_date"] = text[:100]
-        elif ct == "Governing Law" and text:
-            meta["governing_law"] = text[:200]
+    system = """You are a legal contract report generator.
+Synthesize the provided contract review metadata and risk assessments into a JSON report summary.
 
-    return meta
+=== CRITICAL RULES ===
+1. Return ONLY a valid JSON object. Do not include markdown tags or extra text.
+2. The summary must be professional and objective.
 
-
-def report_agent(state: PipelineState) -> dict:
-    """Agent 4 entry-point: assemble the final ContractReport."""
-
-    clauses = state.get("identified_clauses", [])
-    risks = state.get("risk_assessments", [])
-    overall_score = state.get("overall_risk_score", 1.0)
-    page_count = state.get("page_count", 0)
-    errors: list[str] = list(state.get("errors", []))
-
-    # ── Deterministic assembly ──────────────────────────────────────────
-    metadata = _extract_metadata(clauses)
-
-    high_count = sum(1 for r in risks if r.get("risk_level") == "HIGH")
-    medium_count = sum(1 for r in risks if r.get("risk_level") == "MEDIUM")
-    low_count = sum(1 for r in risks if r.get("risk_level") == "LOW")
-
-    # Build validated clause objects
-    identified = []
-    for cl in clauses:
-        try:
-            identified.append(IdentifiedClause(
-                clause_type=cl["clause_type"],
-                text_excerpt=cl["text_excerpt"],
-                page_number=cl.get("page_number", 1),
-                section=cl.get("section", ""),
-                confidence=cl.get("confidence", 0.8),
-            ))
-        except Exception:
-            pass
-
-    # Build validated risk objects
-    assessed = []
-    for r in risks:
-        try:
-            assessed.append(RiskAssessment(
-                clause_type=r["clause_type"],
-                risk_level=r["risk_level"],
-                risk_score=r["risk_score"],
-                risk_rationale=r["risk_rationale"],
-                negotiation_tip=r["negotiation_tip"],
-                source_text=r.get("source_text", ""),
-            ))
-        except Exception:
-            pass
-
-    # ── LLM-generated summary & recommendations ────────────────────────
-    executive_summary = ""
-    recommendations: list[str] = []
-    risk_summary = ""
-
-    if risks:
-        # We will use call_llm to query Claude Opus 4.8 via the unlimited.surf gateway.
-
-        # Build a concise risk digest for the LLM
-        risk_digest = []
-        for r in risks:
-            if r.get("risk_score", 0) >= 5:
-                risk_digest.append(
-                    f"- {r['clause_type']} (score {r['risk_score']}/10): {r.get('risk_rationale', '')[:150]}"
-                )
-
-        system = """You are a senior legal advisor writing a concise executive summary for a contract review report.
-Based on the risk findings provided, write:
-1. "executive_summary": A highly concise, 1-2 sentence professional summary of the contract's risk profile. Focus only on the most critical exposures.
-2. "risk_summary": A single-sentence verdict (e.g., "Moderate risk with 3 high-risk clauses requiring negotiation.").
-3. "recommendations": A JSON list of 2-3 key, highly actionable next steps.
-
-Return ONLY valid JSON:
+=== OUTPUT FORMAT ===
 {
-    "executive_summary": "...",
-    "risk_summary": "...",
-    "recommendations": ["...", "..."]
+  "document_name": "<formal title of contract or derived filename>",
+  "parties": ["<party 1>", "<party 2>"],
+  "agreement_date": "<date in YYYY-MM-DD or empty>",
+  "governing_law": "<state / jurisdiction or empty>",
+  "executive_summary": "<2-3 paragraph summary of the agreement, key risks, and overall legal exposure>",
+  "risk_summary": "<1-2 sentence high-level risk summary sentence>",
+  "recommendations": [
+    "<actionable mitigation recommendation 1>",
+    "<actionable mitigation recommendation 2>"
+  ]
 }"""
 
-        user = f"""Contract: {metadata['document_name']}
-Overall Risk Score: {overall_score}/10
-High-Risk Clauses: {high_count}, Medium: {medium_count}, Low: {low_count}
-Total Clauses Found: {len(clauses)}
+    user = f"""Contract Metadata:
+{json.dumps(meta_info, indent=2)}
 
-Key Risk Findings:
-{chr(10).join(risk_digest) if risk_digest else 'No significant risks identified.'}
+Risk Assessments:
+{json.dumps(risks_subset, indent=2)}
 
-Generate the executive summary, risk summary, and recommendations."""
+Synthesize these inputs into the requested JSON report."""
+    return system, user
 
-        max_retries = 5
-        backoff = 3.0
-        success = False
+# Compile and format the final evaluation report
+def report_agent(state: PipelineState) -> dict:
+    if state.get("status") in ["parse_error", "classification_error", "risk_analysis_error"]:
+        return {"final_report": {}, "status": "report_generation_error"}
 
-        for attempt in range(max_retries):
-            try:
-                # Stagger calls politely
-                time.sleep(1.0)
+    errors: list[str] = list(state.get("errors", []))
+    filename = state.get("file_path", "contract.pdf").split("/")[-1].split("\\")[-1]
 
-                response_text = call_llm(
-                    system_prompt=system,
-                    user_prompt=user,
-                    temperature=0.2,
-                    max_tokens=1500
-                )
+    system_prompt, user_prompt = _build_prompt(state)
 
-                text = response_text.strip()
-                if text.startswith("```"):
-                    text = re.sub(r"^```(?:json)?\s*", "", text)
-                    text = re.sub(r"\s*```$", "", text)
-                text = text.strip()
+    max_retries = 3
+    backoff = 2.0
+    parsed_report = {}
+    success = False
 
-                # Robust extraction: find the JSON object in the text
-                object_match = re.search(r"\{\s*\".*\}\s*", text, re.DOTALL)
-                if object_match:
-                    text = object_match.group(0)
+    # Execute LLM querying loop with retries
+    for attempt in range(max_retries):
+        try:
+            time.sleep(1.0)
+            response_text = call_llm(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.2,
+                max_tokens=2048
+            )
 
-                parsed = json.loads(text)
-                executive_summary = parsed.get("executive_summary", "")
-                risk_summary = parsed.get("risk_summary", "")
-                recommendations = parsed.get("recommendations", [])
-                success = True
-                break
+            text = response_text.strip()
+            if text.startswith("```"):
+                text = re.sub(r"^```(?:json)?\s*", "", text)
+                text = re.sub(r"\s*```$", "", text)
+            text = text.strip()
 
-            except Exception as exc:
-                print(f"  [Report Generator] Attempt {attempt+1} failed: {exc}")
-                time.sleep(backoff)
-                backoff *= 2.0
-                if attempt == max_retries - 1:
-                    errors.append(f"Summary generation error: {exc}")
-                    executive_summary = f"Contract analysis complete. Overall risk score: {overall_score}/10 with {high_count} high-risk clauses identified."
-                    risk_summary = f"Risk score {overall_score}/10 — {'HIGH' if overall_score >= 7 else 'MODERATE' if overall_score >= 4 else 'LOW'} risk."
-                    recommendations = ["Review all high-risk clauses with legal counsel before signing."]
+            obj_match = re.search(r"\{.*\}", text, re.DOTALL)
+            if obj_match:
+                text = obj_match.group(0)
 
-    else:
-        executive_summary = "No clauses were identified in this document for risk assessment."
-        risk_summary = "Unable to assess risk — no clauses found."
-        recommendations = ["Ensure the uploaded document is a valid legal contract."]
+            parsed_report = json.loads(text)
+            success = True
+            break
 
-    # ── Assemble final report ───────────────────────────────────────────
-    report = ContractReport(
-        document_name=metadata["document_name"],
-        parties=metadata["parties"],
-        agreement_date=metadata["agreement_date"],
-        effective_date=metadata["effective_date"],
-        governing_law=metadata["governing_law"],
-        overall_risk_score=overall_score,
-        risk_summary=risk_summary,
-        total_clauses_found=len(identified),
-        high_risk_count=high_count,
-        medium_risk_count=medium_count,
-        low_risk_count=low_count,
-        identified_clauses=identified,
-        risk_assessments=assessed,
-        executive_summary=executive_summary,
-        recommendations=recommendations,
-        analysis_timestamp=datetime.now(timezone.utc).isoformat(),
-        page_count=page_count,
-    )
+        except Exception as exc:
+            print(f"  [Report Generator] Attempt {attempt+1} failed: {exc}")
+            time.sleep(backoff)
+            backoff *= 2.0
 
-    report_dict = report.model_dump()
+    # Apply fallback content in case of errors
+    if not success:
+        errors.append("Failed to generate synthesized report from LLM. Using fallback values.")
+        parsed_report = {
+            "document_name": filename,
+            "parties": [],
+            "agreement_date": "",
+            "governing_law": "",
+            "executive_summary": "Analysis completed. Individual risk assessments are available below.",
+            "risk_summary": "Overall risk classification was determined from identified clauses.",
+            "recommendations": ["Ensure manual review of all high-risk items."],
+        }
 
-    print(f"  [Report Generator] Final report assembled — {len(identified)} clauses, score {overall_score}/10")
+    # Count risk levels in findings
+    high_count = sum(1 for r in state.get("risk_assessments", []) if r["risk_score"] >= 7)
+    med_count = sum(1 for r in state.get("risk_assessments", []) if 4 <= r["risk_score"] < 7)
+    low_count = sum(1 for r in state.get("risk_assessments", []) if r["risk_score"] < 4)
+
+    parsed_report["document_name"] = parsed_report.get("document_name") or filename
+    parsed_report["page_count"] = state.get("page_count", 0)
+    parsed_report["overall_risk_score"] = state.get("overall_risk_score", 0.0)
+    parsed_report["high_risk_count"] = high_count
+    parsed_report["medium_risk_count"] = med_count
+    parsed_report["low_risk_count"] = low_count
+    parsed_report["analysis_timestamp"] = datetime.now(timezone.utc).isoformat()
+    parsed_report["identified_clauses"] = state.get("identified_clauses", [])
+    parsed_report["risk_assessments"] = state.get("risk_assessments", [])
+    parsed_report["total_clauses_found"] = len(state.get("identified_clauses", []))
+
+    print(f"  [Report Generator] Compiled report for {filename}")
 
     return {
-        "final_report": report_dict,
+        "final_report": parsed_report,
         "status": "complete",
         "errors": errors,
     }

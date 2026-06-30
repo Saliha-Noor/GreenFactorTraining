@@ -250,7 +250,7 @@ def classifier_agent(state: PipelineState) -> dict:
         # Attempt API calls with retries
         for attempt in range(max_retries):
             try:
-                time.sleep(1.0)
+                time.sleep(3.0)
 
                 response_text = call_llm(
                     system_prompt=system_prompt,
@@ -269,13 +269,16 @@ def classifier_agent(state: PipelineState) -> dict:
                 if array_match:
                     text = array_match.group(0)
 
+                # Sanitize control characters that Groq sometimes injects
+                text = re.sub(r'[\x00-\x1f\x7f]', lambda m: ' ' if m.group() in ('\n', '\r', '\t') else '', text)
+
                 # Parse and repair JSON content
                 try:
-                    parsed = json.loads(text)
+                    parsed = json.loads(text, strict=False)
                 except json.JSONDecodeError:
                     repaired = _repair_truncated_json(text)
                     try:
-                        parsed = json.loads(repaired)
+                        parsed = json.loads(repaired, strict=False)
                         print(f"  [Classifier] {page_range}: repaired truncated JSON")
                     except json.JSONDecodeError:
                         raise

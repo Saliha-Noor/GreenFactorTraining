@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LegalLens — Multi-Agent Contract Review System</title>
-    <meta name="description" content="Upload a legal contract and receive an AI-powered risk analysis report using 4 specialized agents and the CUAD dataset.">
+    <meta name="description" content="Upload a legal contract and receive an AI-powered risk analysis report using 5 specialized agents and the CUAD dataset.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css?v=4">
@@ -67,7 +67,7 @@
                 <div class="stat-label">Contracts Analyzed</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">4</div>
+                <div class="stat-value">5</div>
                 <div class="stat-label">AI Agents</div>
             </div>
         </div>
@@ -77,7 +77,7 @@
             <div class="upload-hero">
                 <h1 class="elegant-tab-title">LegalLens</h1>
                 <h2>Analyze Your Contract</h2>
-                <p>Upload a PDF contract and our 4-agent AI pipeline will identify clauses, assess risks, and generate a structured report powered by the CUAD dataset.</p>
+                <p>Upload a PDF contract and our 5-agent AI pipeline will identify clauses, assess risks, detect missing clauses, and generate a structured report powered by the CUAD dataset.</p>
             </div>
 
             <div class="upload-zone" id="drop-zone">
@@ -115,10 +115,26 @@
                         </div>
                         <div class="step-bar"><div class="step-fill"></div></div>
                     </div>
+                    <div class="step" id="step-missing">
+                        <div class="step-icon">🔎</div>
+                        <div class="step-info">
+                            <span class="step-label">Agent 4: Missing Clause Detector</span>
+                            <span class="step-status">Waiting...</span>
+                        </div>
+                        <div class="step-bar"><div class="step-fill"></div></div>
+                    </div>
+                    <div class="step" id="step-conflict">
+                        <div class="step-icon">⚔️</div>
+                        <div class="step-info">
+                            <span class="step-label">Agent 5: Conflict Detector</span>
+                            <span class="step-status">Waiting...</span>
+                        </div>
+                        <div class="step-bar"><div class="step-fill"></div></div>
+                    </div>
                     <div class="step" id="step-report">
                         <div class="step-icon">📊</div>
                         <div class="step-info">
-                            <span class="step-label">Agent 4: Report Generator</span>
+                            <span class="step-label">Agent 6: Report Generator</span>
                             <span class="step-status">Waiting...</span>
                         </div>
                         <div class="step-bar"><div class="step-fill"></div></div>

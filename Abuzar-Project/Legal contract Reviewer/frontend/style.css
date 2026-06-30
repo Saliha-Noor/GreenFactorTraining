@@ -1424,4 +1424,433 @@ footer strong {
   .clause-table th, .clause-table td { padding: 12px 14px; }
   .text-excerpt { max-width: 260px; }
   .step-bar { display: none; }
+  .completeness-overview { flex-direction: column; align-items: center; }
+  .completeness-stats { flex-direction: row; gap: 16px; }
 }
+
+/* ========================================
+   MISSING CLAUSE DETECTION STYLES
+   ======================================== */
+
+/* Completeness section overview container */
+.completeness-section {
+  border-left: 4px solid var(--accent);
+}
+
+.completeness-overview {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+  padding: 12px 0;
+}
+
+/* Completeness score gauge circle */
+.completeness-gauge {
+  flex-shrink: 0;
+}
+
+.completeness-circle {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 6px solid;
+  transition: var(--transition);
+  position: relative;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+/* Color coding for completeness gauge */
+.comp-high .completeness-circle {
+  border-color: var(--risk-low);
+  background: linear-gradient(135deg, rgba(5, 150, 105, 0.06), rgba(5, 150, 105, 0.02));
+}
+
+.comp-medium .completeness-circle {
+  border-color: var(--risk-medium);
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.06), rgba(217, 119, 6, 0.02));
+}
+
+.comp-low .completeness-circle {
+  border-color: var(--risk-high);
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.06), rgba(220, 38, 38, 0.02));
+}
+
+/* Completeness score value text */
+.completeness-value {
+  font-size: 28px;
+  font-weight: 900;
+  font-family: var(--font-headings);
+  line-height: 1;
+}
+
+.comp-high .completeness-value { color: var(--risk-low); }
+.comp-medium .completeness-value { color: var(--risk-medium); }
+.comp-low .completeness-value { color: var(--risk-high); }
+
+/* Completeness label below percentage */
+.completeness-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+}
+
+.comp-high .completeness-label { color: var(--risk-low); }
+.comp-medium .completeness-label { color: var(--risk-medium); }
+.comp-low .completeness-label { color: var(--risk-high); }
+
+/* Completeness stats trio row */
+.completeness-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+}
+
+/* Individual completeness stat card */
+.comp-stat {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 20px;
+  background: var(--bg-body);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: var(--transition);
+}
+
+.comp-stat:hover {
+  box-shadow: var(--shadow-sm);
+  transform: translateX(2px);
+}
+
+/* Stat counter values */
+.comp-stat-value {
+  font-size: 26px;
+  font-weight: 900;
+  font-family: var(--font-headings);
+  min-width: 48px;
+  text-align: center;
+}
+
+.comp-present { color: var(--risk-low); }
+.comp-missing { color: var(--risk-high); }
+.comp-weak { color: var(--risk-medium); }
+
+/* Stat category labels */
+.comp-stat-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Missing clause cards container */
+.missing-clause-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+/* Individual missing clause analysis card */
+.missing-clause-card {
+  border-radius: var(--radius-md);
+  border-left: 5px solid;
+  background: var(--bg-body);
+  border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  transition: var(--transition);
+}
+
+.missing-clause-card:hover {
+  box-shadow: var(--shadow);
+  transform: translateX(3px);
+}
+
+/* Color coding for missing vs weak */
+.missing-clause-card.missing {
+  border-left-color: var(--risk-high);
+  background: var(--risk-high-bg);
+}
+
+.missing-clause-card.weak {
+  border-left-color: var(--risk-medium);
+  background: var(--risk-medium-bg);
+}
+
+/* Missing clause card header */
+.missing-clause-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Clause type name in header */
+.missing-clause-type {
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+/* Status badge styling */
+.missing-status-badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.badge-missing {
+  background: var(--risk-high);
+  color: #fff;
+}
+
+.badge-weak {
+  background: var(--risk-medium);
+  color: #fff;
+}
+
+/* Missing clause card body */
+.missing-clause-body {
+  padding: 20px 22px;
+}
+
+/* Individual detail section within card */
+.missing-detail {
+  margin-bottom: 16px;
+}
+
+.missing-detail:last-child {
+  margin-bottom: 0;
+}
+
+.missing-detail strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.missing-detail p {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin: 0;
+}
+
+/* Recommended clause styled block */
+.missing-detail.recommended {
+  padding: 16px 18px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+}
+
+.recommended-text {
+  font-style: italic;
+  color: var(--text-muted) !important;
+  font-size: 12.5px !important;
+  line-height: 1.8 !important;
+}
+
+/* Conflict Detection Agent UI Styles */
+.consistency-explanation-box {
+  background: var(--bg-body);
+  border: 1px solid var(--border);
+  padding: 16px 20px;
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+  flex: 1;
+}
+
+.consistency-explanation-text {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin: 0;
+}
+
+.conflict-cards-group {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  margin-top: 16px;
+}
+
+.conflict-card-ui {
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: var(--transition);
+}
+
+.conflict-card-ui:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+/* Severity styles for conflict cards */
+.conflict-card-ui.critical {
+  border-left: 5px solid var(--risk-high);
+}
+.conflict-card-ui.high {
+  border-left: 5px solid var(--risk-high);
+}
+.conflict-card-ui.medium {
+  border-left: 5px solid var(--risk-medium);
+}
+.conflict-card-ui.low {
+  border-left: 5px solid var(--risk-low);
+}
+
+.conflict-card-ui-header {
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-body);
+}
+
+.conflict-card-ui-category {
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.conflict-severity-badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.conflict-severity-badge.critical {
+  background: var(--risk-high);
+  color: #fff;
+}
+.conflict-severity-badge.high {
+  background: var(--risk-high);
+  color: #fff;
+}
+.conflict-severity-badge.medium {
+  background: var(--risk-medium);
+  color: #fff;
+}
+.conflict-severity-badge.low {
+  background: var(--risk-low);
+  color: #fff;
+}
+
+.conflict-card-ui-body {
+  padding: 20px 22px;
+}
+
+.conflict-clauses-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  background: var(--bg-body);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.conflict-clause-excerpt {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.conflict-clause-excerpt strong {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.conflict-clause-excerpt p {
+  color: var(--text-secondary);
+  font-style: italic;
+  margin: 0;
+}
+
+.conflict-field {
+  margin-bottom: 16px;
+}
+
+.conflict-field:last-of-type {
+  margin-bottom: 0;
+}
+
+.conflict-field strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.conflict-field p {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin: 0;
+}
+
+.consequences-text {
+  color: var(--risk-high) !important;
+  font-weight: 500;
+}
+
+.conflict-field.harmonized {
+  padding: 16px 18px;
+  background: #f0fdf4;
+  border-radius: var(--radius-sm);
+  border: 1px solid #dcfce7;
+  border-left: 3px solid var(--risk-low);
+}
+
+.harmonized-text {
+  font-style: italic;
+  color: #15803d !important;
+  font-size: 13.5px !important;
+  line-height: 1.8 !important;
+}
+
+.conflict-card-ui-footer {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+

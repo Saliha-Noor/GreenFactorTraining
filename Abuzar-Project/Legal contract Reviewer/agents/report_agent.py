@@ -55,7 +55,7 @@ Synthesize these inputs into the requested JSON report."""
 
 # Compile and format the final evaluation report
 def report_agent(state: PipelineState) -> dict:
-    if state.get("status") in ["parse_error", "classification_error", "risk_analysis_error"]:
+    if state.get("status") in ["parse_error", "classification_error", "risk_analysis_error", "missing_clause_error", "conflict_detection_error"]:
         return {"final_report": {}, "status": "report_generation_error"}
 
     errors: list[str] = list(state.get("errors", []))
@@ -71,7 +71,7 @@ def report_agent(state: PipelineState) -> dict:
     # Execute LLM querying loop with retries
     for attempt in range(max_retries):
         try:
-            time.sleep(1.0)
+            time.sleep(3.0)
             response_text = call_llm(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -89,7 +89,10 @@ def report_agent(state: PipelineState) -> dict:
             if obj_match:
                 text = obj_match.group(0)
 
-            parsed_report = json.loads(text)
+            # Sanitize control characters that Groq sometimes injects
+            text = re.sub(r'[\x00-\x1f\x7f](?<!")', lambda m: ' ' if m.group() in ('\n', '\r', '\t') else '', text)
+
+            parsed_report = json.loads(text, strict=False)
             success = True
             break
 
@@ -126,6 +129,12 @@ def report_agent(state: PipelineState) -> dict:
     parsed_report["identified_clauses"] = state.get("identified_clauses", [])
     parsed_report["risk_assessments"] = state.get("risk_assessments", [])
     parsed_report["total_clauses_found"] = len(state.get("identified_clauses", []))
+    parsed_report["contract_type"] = state.get("contract_type", "Unknown")
+    parsed_report["missing_clause_analysis"] = state.get("missing_clause_analysis", [])
+    parsed_report["completeness_score"] = state.get("completeness_score", 0.0)
+    parsed_report["conflict_analysis"] = state.get("conflict_analysis", [])
+    parsed_report["consistency_score"] = state.get("consistency_score", 100.0)
+    parsed_report["consistency_explanation"] = state.get("consistency_explanation", "")
 
     print(f"  [Report Generator] Compiled report for {filename}")
 

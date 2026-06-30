@@ -3,6 +3,8 @@ from agents.state import PipelineState
 from agents.parser_agent import parser_agent
 from agents.classifier_agent import classifier_agent
 from agents.risk_agent import risk_agent
+from agents.missing_clause_agent import missing_clause_agent
+from agents.conflict_agent import conflict_agent
 from agents.report_agent import report_agent
 
 # Build StateGraph pipeline sequentially
@@ -12,12 +14,16 @@ def build_pipeline() -> StateGraph:
     workflow.add_node("parser", parser_agent)
     workflow.add_node("classifier", classifier_agent)
     workflow.add_node("risk_analyzer", risk_agent)
+    workflow.add_node("missing_clause_detector", missing_clause_agent)
+    workflow.add_node("conflict_detector", conflict_agent)
     workflow.add_node("report_generator", report_agent)
 
     workflow.set_entry_point("parser")
     workflow.add_edge("parser", "classifier")
     workflow.add_edge("classifier", "risk_analyzer")
-    workflow.add_edge("risk_analyzer", "report_generator")
+    workflow.add_edge("risk_analyzer", "missing_clause_detector")
+    workflow.add_edge("missing_clause_detector", "conflict_detector")
+    workflow.add_edge("conflict_detector", "report_generator")
     workflow.add_edge("report_generator", END)
 
     return workflow.compile()
@@ -40,6 +46,12 @@ def run_pipeline(file_path: str, status_callback=None) -> dict:
         "identified_clauses": [],
         "risk_assessments": [],
         "overall_risk_score": 0.0,
+        "contract_type": "",
+        "missing_clause_analysis": [],
+        "completeness_score": 0.0,
+        "conflict_analysis": [],
+        "consistency_score": 100.0,
+        "consistency_explanation": "",
         "final_report": {},
         "status": "starting",
         "errors": [],

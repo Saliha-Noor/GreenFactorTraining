@@ -17,10 +17,10 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 REPORTS_DIR.mkdir(exist_ok=True)
 CUAD_DIR.mkdir(exist_ok=True)
 
-# Configure LLM settings
+# Configure LLM settings (Groq API — OpenAI-compatible)
 LLM_API_KEY = os.getenv("LLM_API_KEY")
-LLM_MODEL = os.getenv("LLM_MODEL", "gateway-claude-opus-4-8")
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://unlimited.surf/v1")
+LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
 
 # Define database URL
 DATABASE_URL = f"sqlite:///{DB_PATH}"
@@ -29,19 +29,18 @@ DATABASE_URL = f"sqlite:///{DB_PATH}"
 CUAD_JSON_URL = "https://raw.githubusercontent.com/TheAtticusProject/cuad/main/CUADv1.json"
 CUAD_JSON_PATH = CUAD_DIR / "CUAD_v1" / "CUAD_v1.json"
 
-# Call the Anthropic-compatible gateway LLM
+# Call the Groq LLM via OpenAI-compatible chat completions API
 def call_llm(system_prompt: str, user_prompt: str, temperature: float = 0.1, max_tokens: int = 2048) -> str:
     import requests
-    url = f"{LLM_BASE_URL.rstrip('/')}/messages"
+    url = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
     headers = {
-        "x-api-key": LLM_API_KEY,
-        "anthropic-version": "2023-06-01",
+        "Authorization": f"Bearer {LLM_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
         "model": LLM_MODEL,
-        "system": system_prompt,
         "messages": [
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
         "temperature": temperature,
@@ -50,4 +49,4 @@ def call_llm(system_prompt: str, user_prompt: str, temperature: float = 0.1, max
     response = requests.post(url, json=payload, headers=headers, timeout=120)
     response.raise_for_status()
     res_json = response.json()
-    return res_json["content"][0]["text"]
+    return res_json["choices"][0]["message"]["content"]

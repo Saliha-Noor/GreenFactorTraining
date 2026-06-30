@@ -21,8 +21,8 @@ from reports.docx_generator import generate_docx_report
 # Initialize FastAPI application
 app = FastAPI(
     title="Multi-Agent Legal Contract Review System",
-    description="Upload a PDF contract → get a structured risk analysis report powered by 4 AI agents and the CUAD dataset.",
-    version="1.0.0",
+    description="Upload a PDF contract → get a structured risk analysis report powered by 5 AI agents and the CUAD dataset.",
+    version="1.1.0",
 )
 
 # Enable CORS middleware
@@ -69,7 +69,9 @@ def run_pipeline_task(task_id: str, file_path: str, filename: str, timestamp: st
         next_agent_map = {
             "parser": "classifier",
             "classifier": "risk_analyzer",
-            "risk_analyzer": "report_generator",
+            "risk_analyzer": "missing_clause_detector",
+            "missing_clause_detector": "conflict_detector",
+            "conflict_detector": "report_generator",
             "report_generator": "complete"
         }
         next_agent = next_agent_map.get(node_name, "parser")

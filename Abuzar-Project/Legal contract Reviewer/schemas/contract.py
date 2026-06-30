@@ -19,6 +19,14 @@ class RiskAssessment(BaseModel):
     risk_rationale: str = Field(description="Summary detailing the evaluated risks")
     negotiation_tip: str = Field(description="Actionable mitigation suggestions")
 
+# Structured Pydantic model for missing or weakly defined clause detail
+class MissingClauseDetail(BaseModel):
+    clause_type: str = Field(description="CUAD clause type name")
+    status: str = Field(description="Detection status: 'missing' or 'weakly_defined'")
+    importance: str = Field(description="Why this clause matters for the agreement")
+    legal_risks: str = Field(description="Legal risks caused by absence or weak definition")
+    recommended_clause: str = Field(description="Professionally drafted recommended clause text")
+
 # Structured Pydantic model for finalized report payload
 class ContractAnalysisReport(BaseModel):
     document_name: str = Field(description="Formal title of contract or derived filename")
@@ -34,3 +42,6 @@ class ContractAnalysisReport(BaseModel):
     analysis_timestamp: str = Field(description="ISO report compilation date stamp")
     identified_clauses: List[IdentifiedClause] = Field(description="List of detected clauses")
     risk_assessments: List[RiskAssessment] = Field(description="List of evaluated risk findings")
+    contract_type: Optional[str] = Field(None, description="Detected contract agreement type")
+    missing_clause_analysis: List[MissingClauseDetail] = Field(default=[], description="Missing and weakly defined clause analyses")
+    completeness_score: float = Field(default=0.0, description="Clause completeness percentage (0-100)")

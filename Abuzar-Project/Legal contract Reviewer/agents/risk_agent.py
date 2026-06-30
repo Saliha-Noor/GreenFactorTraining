@@ -79,7 +79,7 @@ def risk_agent(state: PipelineState) -> dict:
         # Query LLM with retry loop
         for attempt in range(max_retries):
             try:
-                time.sleep(1.0)
+                time.sleep(3.0)
                 response_text = call_llm(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
@@ -97,7 +97,10 @@ def risk_agent(state: PipelineState) -> dict:
                 if obj_match:
                     text = obj_match.group(0)
 
-                parsed = json.loads(text)
+                # Sanitize control characters that Groq sometimes injects
+                text = re.sub(r'[\x00-\x1f\x7f]', lambda m: ' ' if m.group() in ('\n', '\r', '\t') else '', text)
+
+                parsed = json.loads(text, strict=False)
 
                 assessments.append({
                     "clause_type": ctype,

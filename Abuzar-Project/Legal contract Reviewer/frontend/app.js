@@ -123,12 +123,14 @@ async function uploadFile(file) {
     progress.style.display = 'block';
     reportContainer.style.display = 'none';
 
-    const steps = ['step-parser', 'step-classifier', 'step-risk', 'step-report'];
+    const steps = ['step-parser', 'step-classifier', 'step-risk', 'step-missing', 'step-conflict', 'step-report'];
     const statusTexts = {
         'parser': 'Agent 1: Extracting contract text from PDF...',
         'classifier': 'Agent 2: Running CUAD clause classifications...',
         'risk_analyzer': 'Agent 3: Calculating risk scores and rationales...',
-        'report_generator': 'Agent 4: Compiling executive summary and Word report...'
+        'missing_clause_detector': 'Agent 4: Detecting missing and weak clauses...',
+        'conflict_detector': 'Agent 5: Detecting logical conflicts and contradictions...',
+        'report_generator': 'Agent 6: Compiling executive summary and Word report...'
     };
 
     // Reset progress items in UI
@@ -220,13 +222,15 @@ async function uploadFile(file) {
 
 // Update pipeline step progress indicators in UI
 function updateProgressUI(currentAgent) {
-    const steps = ['step-parser', 'step-classifier', 'step-risk', 'step-report'];
+    const steps = ['step-parser', 'step-classifier', 'step-risk', 'step-missing', 'step-conflict', 'step-report'];
     const agentMap = {
         'starting': 0,
         'parser': 0,
         'classifier': 1,
         'risk_analyzer': 2,
-        'report_generator': 3
+        'missing_clause_detector': 3,
+        'conflict_detector': 4,
+        'report_generator': 5
     };
 
     const activeIdx = agentMap[currentAgent] !== undefined ? agentMap[currentAgent] : 0;
@@ -250,7 +254,9 @@ function updateProgressUI(currentAgent) {
                 'step-parser': 'Agent 1: Extracting contract text from PDF...',
                 'step-classifier': 'Agent 2: Running CUAD clause classifications...',
                 'step-risk': 'Agent 3: Calculating risk scores and rationales...',
-                'step-report': 'Agent 4: Compiling executive summary and Word report...'
+                'step-missing': 'Agent 4: Detecting missing and weak clauses...',
+                'step-conflict': 'Agent 5: Detecting logical conflicts and contradictions...',
+                'step-report': 'Agent 6: Compiling executive summary and Word report...'
             };
             
             el.querySelector('.step-status').textContent = statusTexts[steps[i]];
@@ -308,12 +314,130 @@ function renderReport(report, reportId) {
     let recItems = '';
     (report.recommendations || []).forEach(r => { recItems += `<li>${esc(r)}</li>`; });
 
+    // Build missing clause section HTML
+    const missingAnalysis = report.missing_clause_analysis || [];
+    const completeness = report.completeness_score || 0;
+    const contractType = report.contract_type || 'Unknown';
+    const missingItems = missingAnalysis.filter(m => m.status === 'missing');
+    const weakItems = missingAnalysis.filter(m => m.status === 'weakly_defined');
+
+    const compClass = completeness >= 80 ? 'comp-high' : completeness >= 50 ? 'comp-medium' : 'comp-low';
+    const compLabel = completeness >= 80 ? 'Excellent' : completeness >= 50 ? 'Moderate' : 'Low — Review Required';
+
+    let missingClauseCards = '';
+    missingItems.forEach(item => {
+        missingClauseCards += `
+            <div class="missing-clause-card missing">
+                <div class="missing-clause-header">
+                    <span class="missing-clause-type">${esc(item.clause_type)}</span>
+                    <span class="missing-status-badge badge-missing">MISSING</span>
+                </div>
+                <div class="missing-clause-body">
+                    <div class="missing-detail">
+                        <strong>📌 Why It Matters:</strong>
+                        <p>${esc(item.importance)}</p>
+                    </div>
+                    <div class="missing-detail">
+                        <strong>⚠️ Legal Risks:</strong>
+                        <p>${esc(item.legal_risks)}</p>
+                    </div>
+                    <div class="missing-detail recommended">
+                        <strong>📝 Recommended Clause:</strong>
+                        <p class="recommended-text">${esc(item.recommended_clause)}</p>
+                    </div>
+                </div>
+            </div>`;
+    });
+
+    let weakClauseCards = '';
+    weakItems.forEach(item => {
+        weakClauseCards += `
+            <div class="missing-clause-card weak">
+                <div class="missing-clause-header">
+                    <span class="missing-clause-type">${esc(item.clause_type)}</span>
+                    <span class="missing-status-badge badge-weak">WEAKLY DEFINED</span>
+                </div>
+                <div class="missing-clause-body">
+                    <div class="missing-detail">
+                        <strong>📌 Why It Matters:</strong>
+                        <p>${esc(item.importance)}</p>
+                    </div>
+                    <div class="missing-detail">
+                        <strong>⚠️ Legal Risks:</strong>
+                        <p>${esc(item.legal_risks)}</p>
+                    </div>
+                    <div class="missing-detail recommended">
+                        <strong>📝 Strengthened Clause:</strong>
+                        <p class="recommended-text">${esc(item.recommended_clause)}</p>
+                    </div>
+                </div>
+            </div>`;
+    });
+
+    // Build conflict detection section HTML
+    const conflictAnalysis = report.conflict_analysis || [];
+    const consistencyScore = report.consistency_score !== undefined ? report.consistency_score : 100.0;
+    const consistencyExplanation = report.consistency_explanation || '';
+
+    const consistClass = consistencyScore >= 80 ? 'comp-high' : consistencyScore >= 50 ? 'comp-medium' : 'comp-low';
+    const consistLabel = consistencyScore >= 80 ? 'High Consistency' : consistencyScore >= 50 ? 'Moderate Conflicts' : 'Highly Contradictory';
+
+    let conflictCards = '';
+    conflictAnalysis.forEach(c => {
+        const severityClass = (c.severity || 'Medium').toLowerCase();
+        let clausesHtml = '';
+        (c.original_clauses || []).forEach((cl, i) => {
+            const num = (c.clause_numbers && c.clause_numbers[i]) ? c.clause_numbers[i] : '?';
+            clausesHtml += `
+                <div class="conflict-clause-excerpt">
+                    <strong>Clause Excerpt (Clause ${num}):</strong>
+                    <p>"${esc(cl)}"</p>
+                </div>
+            `;
+        });
+        
+        conflictCards += `
+            <div class="conflict-card-ui ${severityClass}">
+                <div class="conflict-card-ui-header">
+                    <span class="conflict-card-ui-category">${esc(c.conflict_category)} Conflict</span>
+                    <span class="conflict-severity-badge ${severityClass}">${esc(c.severity.toUpperCase())}</span>
+                </div>
+                <div class="conflict-card-ui-body">
+                    <div class="conflict-clauses-list">
+                        ${clausesHtml}
+                    </div>
+                    <div class="conflict-field">
+                        <strong>📌 Why They Conflict:</strong>
+                        <p>${esc(c.why_conflict)}</p>
+                    </div>
+                    <div class="conflict-field">
+                        <strong>⚖ Which Clause is Legally Stronger:</strong>
+                        <p>${esc(c.stronger_clause)}</p>
+                    </div>
+                    <div class="conflict-field">
+                        <strong>⚠️ Potential Legal Consequences:</strong>
+                        <p class="consequences-text">${esc(c.consequences)}</p>
+                    </div>
+                    <div class="conflict-field harmonized">
+                        <strong>📝 Suggested Harmonized Resolution:</strong>
+                        <p class="harmonized-text">${esc(c.harmonized_clause)}</p>
+                    </div>
+                    <div class="conflict-card-ui-footer">
+                        <span>Confidence Score: ${c.confidence_score}%</span>
+                        <span>ID: ${esc(c.conflict_id)}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
     container.innerHTML = `
         <div class="report-header">
             <h2 class="report-title">📋 ${esc(report.document_name || 'Contract Analysis Report')}</h2>
             <div class="report-meta">
                 <span>📄 ${report.page_count || 0} pages</span>
                 <span>🔍 ${report.total_clauses_found || 0} clauses</span>
+                <span>📑 ${esc(contractType)}</span>
                 <span>🕐 ${report.analysis_timestamp ? new Date(report.analysis_timestamp).toLocaleString() : 'Just now'}</span>
                 ${report.governing_law ? `<span>⚖ ${esc(report.governing_law).slice(0, 60)}</span>` : ''}
             </div>
@@ -333,6 +457,67 @@ function renderReport(report, reportId) {
                 </div>
             </div>
         </div>
+
+        <div class="report-section completeness-section">
+            <h3>🧩 Clause Completeness</h3>
+            <div class="completeness-overview">
+                <div class="completeness-gauge ${compClass}">
+                    <div class="completeness-circle">
+                        <span class="completeness-value">${completeness.toFixed(1)}%</span>
+                        <span class="completeness-label">${compLabel}</span>
+                    </div>
+                </div>
+                <div class="completeness-stats">
+                    <div class="comp-stat">
+                        <span class="comp-stat-value comp-present">${report.total_clauses_found || 0}</span>
+                        <span class="comp-stat-label">Present</span>
+                    </div>
+                    <div class="comp-stat">
+                        <span class="comp-stat-value comp-missing">${missingItems.length}</span>
+                        <span class="comp-stat-label">Missing</span>
+                    </div>
+                    <div class="comp-stat">
+                        <span class="comp-stat-value comp-weak">${weakItems.length}</span>
+                        <span class="comp-stat-label">Weak</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="report-section consistency-section">
+            <h3>⚔️ Contract Consistency Report</h3>
+            <div class="completeness-overview">
+                <div class="completeness-gauge ${consistClass}">
+                    <div class="completeness-circle">
+                        <span class="completeness-value">${consistencyScore.toFixed(1)}/100</span>
+                        <span class="completeness-label">${consistLabel}</span>
+                    </div>
+                </div>
+                <div class="completeness-stats">
+                    <div class="consistency-explanation-box">
+                        <p class="consistency-explanation-text"><strong>Analysis:</strong> ${esc(consistencyExplanation)}</p>
+                    </div>
+                    <div class="comp-stat">
+                        <span class="comp-stat-value comp-missing">${conflictAnalysis.length}</span>
+                        <span class="comp-stat-label">Conflicts Found</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        ${conflictCards ? `
+        <div class="report-section">
+            <h3>⚠️ Detected Conflicts & Contradictions (${conflictAnalysis.length})</h3>
+            <div class="conflict-cards-group">${conflictCards}</div>
+        </div>` : ''}
+
+        ${missingClauseCards || weakClauseCards ? `
+        <div class="report-section">
+            <h3>🚫 Missing & Weakly Defined Clauses (${missingAnalysis.length})</h3>
+            ${missingClauseCards ? `<div class="missing-clause-group">${missingClauseCards}</div>` : ''}
+            ${weakClauseCards ? `<div class="missing-clause-group">${weakClauseCards}</div>` : ''}
+        </div>` : ''}
+
         <div class="report-section">
             <h3>📝 Executive Summary</h3>
             <p class="executive-summary">${esc(report.executive_summary || 'No summary available.')}</p>

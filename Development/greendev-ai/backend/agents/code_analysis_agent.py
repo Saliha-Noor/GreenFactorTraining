@@ -1,5 +1,5 @@
 """
-Agent 1: Code Analysis Agent
+Agent 1 — Code Analysis Agent
 Parses Python code using the ast module.
 Does NOT execute the code.
 """

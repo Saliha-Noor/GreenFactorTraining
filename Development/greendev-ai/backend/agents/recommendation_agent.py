@@ -1,7 +1,7 @@
 """
 Agent 5 — Recommendation Agent
 Calls Gemini API with all measured data and returns:
-  1. Green Score (0-100, with sub-scores)
+  1. Green Score (0-10, with sub-scores)
   2. Carbon Cost Projection (yearly CO2 estimate, current vs optimized)
 """
 

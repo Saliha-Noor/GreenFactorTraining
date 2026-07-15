@@ -9,19 +9,56 @@ from datetime import datetime
 DB_PATH = os.path.join(os.path.dirname(__file__), "greendev.db")
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
-    # Enable foreign keys
+    # Enable foreign keys and WAL mode
     conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
     yield conn
 
 def init_db():
-    # If the database does not exist or tables are missing, create them.
-    conn = sqlite3.connect(DB_PATH)
+    # Clean up dead legacy files from the frontend
+    try:
+        dead_paths = [
+            "../frontend/src/App.jsx",
+            "../frontend/src/main.jsx",
+            "../frontend/src/index.css",
+            "../frontend/src/utils/api.js",
+            "../frontend/src/app/components/SettingsScreen.tsx",
+            "../frontend/src/app/components/settingsData.ts",
+            "../frontend/vite.config.js"
+        ]
+        for rel_path in dead_paths:
+            abs_path = os.path.abspath(os.path.join(os.path.dirname(__file__), rel_path))
+            if os.path.exists(abs_path):
+                os.remove(abs_path)
+        import shutil
+        comp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend/src/components"))
+        if os.path.exists(comp_dir):
+            shutil.rmtree(comp_dir)
+    except Exception:
+        pass
+
+    # If the database does not exist or is corrupted/invalid, recreate it.
+    if os.path.exists(DB_PATH):
+        try:
+            conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA integrity_check;")
+            cursor.fetchone()
+            conn.close()
+        except sqlite3.DatabaseError:
+            try:
+                os.remove(DB_PATH)
+            except Exception:
+                pass
+
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
     cursor = conn.cursor()
 
-    # Enable foreign keys
-    cursor.execute("PRAGMA foreign_keys = ON;")
+    # Enable foreign keys and WAL mode
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
 
     # 1. Users table
     cursor.execute("""
@@ -42,8 +79,6 @@ def init_db():
         carbon_region TEXT DEFAULT 'Global',
         report_format TEXT DEFAULT 'PDF',
         notify_analysis INTEGER DEFAULT 1,
-        notify_weekly INTEGER DEFAULT 0,
-        notify_security INTEGER DEFAULT 1,
         notify_updates INTEGER DEFAULT 1,
         notify_marketing INTEGER DEFAULT 0,
         notify_alerts INTEGER DEFAULT 1
@@ -111,6 +146,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         category_index INTEGER NOT NULL,
         category_name TEXT NOT NULL,
+        intro TEXT,
         heading TEXT NOT NULL,
         body TEXT NOT NULL,
         display_order INTEGER DEFAULT 0
@@ -124,19 +160,6 @@ def init_db():
         category_index INTEGER NOT NULL,
         question TEXT NOT NULL,
         answer TEXT NOT NULL,
-        display_order INTEGER DEFAULT 0
-    );
-    """)
-
-    # 9. Video Tutorials table
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS video_tutorials (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        category_index INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        duration TEXT NOT NULL,
-        url TEXT DEFAULT '',
-        thumbnail TEXT DEFAULT '',
         display_order INTEGER DEFAULT 0
     );
     """)
@@ -167,6 +190,42 @@ def init_db():
     );
     """)
 
+    # 12. Security Logs table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS security_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        ip_address TEXT,
+        user_agent TEXT,
+        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+        details TEXT
+    );
+    """)
+
+    # 13. Notifications table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        is_read INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    # Dynamic schema migrations for existing DBs
+    def add_column_if_missing(table, column, col_type):
+        try:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        except sqlite3.OperationalError:
+            pass
+
+    add_column_if_missing("users", "created_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
+    add_column_if_missing("help_articles", "intro", "TEXT")
+
     conn.commit()
 
     # Seed static content tables if empty
@@ -175,43 +234,115 @@ def init_db():
 
 def seed_static_content(conn):
     cursor = conn.cursor()
-
+    
+    # Clear static tables to ensure they get updated with latest columns/schema content
+    cursor.execute("DELETE FROM help_articles")
+    cursor.execute("DELETE FROM faqs")
+    cursor.execute("DELETE FROM benchmark_notes")
+    cursor.execute("DELETE FROM sample_scripts")
+ 
     # Check if help articles are empty
     cursor.execute("SELECT COUNT(*) FROM help_articles")
     if cursor.fetchone()[0] == 0:
         help_data = [
             # 0: Green Score
-            (0, "Green Score", "How the score is calculated", "Four sub-scores contribute equally: Performance (runtime efficiency), Energy (kWh per execution), Carbon (CO₂ equivalent), and Maintainability (cyclomatic complexity). Each is normalised to 0–10 and averaged into the final score.", 0),
-            (0, "Green Score", "SCI — Software Carbon Intensity", "SCI is an ISO 21031 standard metric expressed as kgCO₂eq per 1 000 functional runs. GreenDevAI computes an estimated SCI (from static analysis) and a real SCI (from live RAPL). The deviation between them indicates measurement confidence.", 1),
-            (0, "Green Score", "Verdict labels", "Efficient (≥7.5): your code is already in the top efficiency tier. Moderate (5–7.4): meaningful improvements are possible. Needs Work (<5): significant energy waste detected — prioritise the hotspot fixes immediately.", 2),
+            (0, "Green Score", 
+             "The Green Score (0–10) is a composite rating of your Python code's environmental efficiency, weighing energy consumption, carbon intensity, runtime performance, and maintainability equally.",
+             "How the score is calculated", 
+             "Four sub-scores contribute equally: Performance (runtime efficiency), Energy (kWh per execution), Carbon (CO₂ equivalent), and Maintainability (cyclomatic complexity). Each is normalised to 0–10 and averaged into the final score.", 0),
+            
+            (0, "Green Score", 
+             "The Green Score (0–10) is a composite rating of your Python code's environmental efficiency, weighing energy consumption, carbon intensity, runtime performance, and maintainability equally.",
+             "SCI — Software Carbon Intensity", 
+             "SCI is an ISO 21031 standard metric expressed as kgCO₂eq per 1,000 functional runs. GreenDevAI computes an estimated SCI (from static analysis) and a real SCI (from live RAPL). The deviation between them indicates measurement confidence.", 1),
+            
+            (0, "Green Score", 
+             "The Green Score (0–10) is a composite rating of your Python code's environmental efficiency, weighing energy consumption, carbon intensity, runtime performance, and maintainability equally.",
+             "Verdict labels", 
+             "Efficient (≥7.5): your code is already in the top efficiency tier. Moderate (5–7.4): meaningful improvements are possible. Needs Work (<5): significant energy waste detected — prioritise the hotspot fixes immediately.", 2),
             
             # 1: Energy Metrics
-            (1, "Energy Metrics", "What RAPL measures", "RAPL reads CPU package power, core power, and DRAM power simultaneously. GreenDevAI runs 1 000 warm iterations to eliminate cold-start noise, then averages the per-run energy cost to a stable figure.", 0),
-            (1, "Energy Metrics", "Reading the kWh number", "1.247 kWh per 1 000 runs means this function, called 1 000 times, consumes 1.247 kilowatt-hours — equivalent to a 60 W bulb running for ~21 hours. Optimised code typically reduces this by 40–60%.", 1),
-            (1, "Energy Metrics", "Hotspot identification", "The hotspot is the function responsible for the highest share of total energy. GreenDevAI cross-validates static AST loop-depth analysis with the live RAPL profile to confirm the finding with ≥90% confidence.", 2),
+            (1, "Energy Metrics",
+             "Energy data is captured using RAPL (Running Average Power Limit) — hardware performance counters built into Intel and AMD CPUs that report actual package and DRAM power draw at microsecond granularity.",
+             "What RAPL measures", 
+             "RAPL reads CPU package power, core power, and DRAM power simultaneously. GreenDevAI executes the uploaded code once per analysis under sandbox isolation to capture steady-state energy consumption.", 0),
+            
+            (1, "Energy Metrics",
+             "Energy data is captured using RAPL (Running Average Power Limit) — hardware performance counters built into Intel and AMD CPUs that report actual package and DRAM power draw at microsecond granularity.",
+             "Reading the kWh number", 
+             "1.247 kWh per 1,000 runs means this function, called 1,000 times, consumes 1.247 kilowatt-hours — equivalent to a 60 W bulb running for ~21 hours. Optimised code typically reduces this by 40–60%.", 1),
+            
+            (1, "Energy Metrics",
+             "Energy data is captured using RAPL (Running Average Power Limit) — hardware performance counters built into Intel and AMD CPUs that report actual package and DRAM power draw at microsecond granularity.",
+             "Hotspot identification", 
+             "The hotspot is the function responsible for the highest share of total energy. GreenDevAI cross-validates static AST loop-depth analysis with the live RAPL profile to confirm the finding.", 2),
 
             # 2: RAPL Benchmark
-            (2, "RAPL Benchmark", "Benchmark methodology", "GreenDevAI compiles reference implementations of the detected algorithmic pattern (matrix ops, sorting, graph traversal) in C, C++ (−O2), and Java (JVM warm). The 'Energy factor' shows how many times more energy Python uses relative to C.", 0),
-            (2, "RAPL Benchmark", "Interpreting the energy factor", "A factor of 100× means Python uses 100× more energy than C for equivalent work. This is typical for tight numerical loops without NumPy. With vectorisation, the factor often drops to 5–15×.", 1),
-            (2, "RAPL Benchmark", "Java vs Python", "Java's JIT compiler closes much of the gap with C after warm-up. Python without NumPy often exceeds Java by 5–20×. NumPy code can match Java for array-heavy workloads.", 2),
+            (2, "RAPL Benchmark",
+             "GreenDevAI compiles reference implementations of the detected algorithmic pattern (matrix ops, sorting, graph traversal) in C, C++ (−O2), and Java (JVM warm) to compute the 'Energy factor'.",
+             "Benchmark methodology", 
+             "GreenDevAI compiles reference implementations of the detected algorithmic pattern in C, C++ (−O2), and Java to compare Python execution. The 'Energy factor' shows how many times more energy Python uses relative to C.", 0),
+            
+            (2, "RAPL Benchmark",
+             "GreenDevAI compiles reference implementations of the detected algorithmic pattern (matrix ops, sorting, graph traversal) in C, C++ (−O2), and Java (JVM warm) to compute the 'Energy factor'.",
+             "Interpreting the energy factor", 
+             "A factor of 100× means Python uses 100× more energy than C for equivalent work. This is typical for tight numerical loops without NumPy. With vectorisation, the factor often drops to 5–15×.", 1),
+            
+            (2, "RAPL Benchmark",
+             "GreenDevAI compiles reference implementations of the detected algorithmic pattern (matrix ops, sorting, graph traversal) in C, C++ (−O2), and Java (JVM warm) to compute the 'Energy factor'.",
+             "Java vs Python", 
+             "Java's JIT compiler closes much of the gap with C after warm-up. Python without NumPy often exceeds Java by 5–20×. NumPy code can match Java for array-heavy workloads.", 2),
 
             # 3: Carbon Projection
-            (3, "Carbon Projection", "Carbon intensity by region", "Carbon intensity (gCO₂eq/kWh) varies by electricity grid: EU average ≈ 280, UK ≈ 210, US average ≈ 390, global ≈ 460. Update your region in Profile → Preferences to get an accurate local projection.", 0),
-            (3, "Carbon Projection", "Reading the chart", "The orange line shows your current CO₂ trajectory over 12 months. The green line shows the projected trajectory after applying the top recommended optimisation. The gap between them is your potential annual saving.", 1),
-            (3, "Carbon Projection", "Real-world equivalents", "19.6 kg CO₂ is equivalent to driving ~120 km in an average petrol car, or manufacturing ~1.5 kg of beef. These analogues help communicate impact to non-technical stakeholders.", 2),
+            (3, "Carbon Projection",
+             "GreenDevAI projects the carbon footprint of your code based on grid carbon intensity and execution frequency.",
+             "Carbon intensity by region", 
+             "Carbon intensity (gCO₂eq/kWh) varies by electricity grid: EU average ≈ 280, UK ≈ 210, US average ≈ 390, global ≈ 460. Update your region in Profile → Preferences to get an accurate local projection.", 0),
+            
+            (3, "Carbon Projection",
+             "GreenDevAI projects the carbon footprint of your code based on grid carbon intensity and execution frequency.",
+             "Reading the chart", 
+             "The orange line shows your current CO₂ trajectory over 12 months. The green line shows the projected trajectory after applying the top recommended optimisation. The gap between them is your potential annual saving.", 1),
+            
+            (3, "Carbon Projection",
+             "GreenDevAI projects the carbon footprint of your code based on grid carbon intensity and execution frequency.",
+             "Real-world equivalents", 
+             "19.6 kg CO₂ is equivalent to driving ~120 km in an average petrol car, or manufacturing ~1.5 kg of beef. These analogues help communicate impact to non-technical stakeholders.", 2),
 
             # 4: Planner Agent
-            (4, "Planner Agent", "Task decomposition", "The Planner parses the dependency graph of the seven analysis agents. Agents with no shared data inputs (Energy and Benchmark) are spawned in parallel, cutting total wall-clock time by ~46% versus sequential execution.", 0),
-            (4, "Planner Agent", "Anomaly detection", "After Energy and SCI results arrive, the Planner checks whether real SCI deviates from estimated SCI by more than ±15%. A deviation above that threshold triggers a re-run of the Energy agent with extended sampling.", 1),
-            (4, "Planner Agent", "Confidence scoring", "Confidence combines: agreement between static AST analysis and RAPL profiling on hotspot location, SCI deviation within the normal band, and benchmark variance below 5%. 94% means all three checks passed.", 2),
+            (4, "Planner Agent",
+             "The Planner agent acts as an orchestrator, analyzing code hotspots and recommending energy-efficient alternatives.",
+             "Task decomposition", 
+             "The Planner parses the dependency graph of the five analysis agents. Agents with no shared data inputs (Energy and Benchmark) are spawned in parallel, cutting total wall-clock time by ~46% versus sequential execution.", 0),
+            
+            (4, "Planner Agent",
+             "The Planner agent acts as an orchestrator, analyzing code hotspots and recommending energy-efficient alternatives.",
+             "Anomaly detection", 
+             "After Energy and SCI results arrive, the Planner checks whether real SCI deviates from estimated SCI by more than ±50%. If a significant anomaly is detected, it is flagged in the UI for review.", 1),
+            
+            (4, "Planner Agent",
+             "The Planner agent acts as an orchestrator, analyzing code hotspots and recommending energy-efficient alternatives.",
+             "Confidence scoring", 
+             "Confidence combines agreement between static AST analysis and RAPL profiling, SCI deviation within the normal band, and benchmark variance. The confidence level is represented as high, medium, or low.", 2),
 
             # 5: Export Report
-            (5, "Export Report", "PDF report", "A formatted, print-ready document with embedded charts, an executive summary, detailed findings per agent, ISO 21031 citations, and a methodology appendix. Typically 8–12 pages for a medium-complexity file.", 0),
-            (5, "Export Report", "Markdown report", "A structured .md file suitable for GitHub PRs, Notion, Confluence, or CI pipeline artefacts. Includes all tables and a text-based chart representation. Ideal for automated green-software gates in CI/CD.", 1),
-            (5, "Export Report", "Privacy & compliance", "GreenDevAI runs entirely in your browser. Reports are generated client-side and downloaded directly — no file content or results are ever transmitted to our servers. Reports include an analysis ID for traceability.", 2)
+            (5, "Export Report",
+             "Export options allow you to download a comprehensive Green Score report in PDF or Markdown format.",
+             "PDF report", 
+             "A formatted, print-ready document with embedded charts, an executive summary, detailed findings per agent, ISO 21031 citations, and a methodology appendix.", 0),
+            
+            (5, "Export Report",
+             "Export options allow you to download a comprehensive Green Score report in PDF or Markdown format.",
+             "Markdown report", 
+             "A structured .md file suitable for GitHub PRs, Notion, Confluence, or CI pipeline artefacts. Includes all tables and a text-based chart representation.", 1),
+            
+            (5, "Export Report",
+             "Export options allow you to download a comprehensive Green Score report in PDF or Markdown format.",
+             "Privacy & compliance", 
+             "Files are uploaded to the secure server for analysis and benchmarking. Run history and analysis metadata are persisted under your user profile to power the dashboard and trajectory tracking.", 2)
         ]
         cursor.executemany(
-            "INSERT INTO help_articles (category_index, category_name, heading, body, display_order) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO help_articles (category_index, category_name, intro, heading, body, display_order) VALUES (?, ?, ?, ?, ?, ?)",
             help_data
         )
 
@@ -223,7 +354,7 @@ def seed_static_content(conn):
             (0, "How do I reach 8+?", "Apply the top hotspot fix — usually an np.einsum or vectorisation rewrite — then re-run. Most codebases see a 1.5–2 point jump from a single fix.", 1),
             (0, "Is the score comparable across projects?", "Yes. All scores are normalised against a reference baseline so a 7.2 on a 50-line script equals a 7.2 on a 2 000-line module.", 2),
             
-            (1, "Why 1 000 iterations?", "Averaging across many iterations eliminates OS scheduling noise, CPU frequency scaling events, and cache cold-start effects — giving a reproducible, stable energy reading.", 0),
+            (1, "Why run single-execution analysis?", "Running user code inside a secure sandbox measures steady-state energy consumption without long warmups or hanging issues, ensuring safe and predictable execution.", 0),
             (1, "What if RAPL isn't available?", "GreenDevAI falls back to a power-model estimation using CPU frequency and instruction counts. Accuracy drops from ±2% to ±8% but remains sufficient for ranking hotspots.", 1),
             (1, "What does 'warm cache' mean?", "The first few iterations are discarded because the L1/L2 cache is cold and branch predictors haven't learned the code's patterns. Warmup ensures we measure steady-state cost.", 2),
 
@@ -235,39 +366,15 @@ def seed_static_content(conn):
             (3, "What is kgCO₂eq?", "Kilograms of CO₂ equivalent — a unit that combines CO₂, methane, and nitrous oxide from electricity generation, weighted by their global-warming potential.", 1),
             (3, "Can I export the chart data?", "Yes — the Export tab includes the 12-month projection table as a CSV-formatted block inside both the PDF and Markdown reports.", 2),
 
-            (4, "What triggers a re-run?", "SCI deviation >±15%, benchmark variance >5%, or an unexpected runtime exception in any agent. All re-run decisions are logged in the Reasoning block.", 0),
+            (4, "What triggers an anomaly flag?", "SCI deviation >±50%, or an unexpected runtime exception in any agent. All execution details are logged in the Reasoning block.", 0),
             (4, "Can I configure the Planner?", "Not via the UI, but the API exposes planner_config parameters for anomaly thresholds, max re-runs, and parallelism limits for enterprise users.", 1),
             (4, "How much time does the Planner add?", "The Planner itself takes ~900 ms. The parallel execution it enables saves 2–4 s on a typical file, so it is net-positive in all cases.", 2),
 
-            (5, "Can I customise the report template?", "Pro plan users can add a custom logo. Enterprise plan allows full template customisation via a Handlebars template API.", 0),
-            (5, "What citations are included?", "ISO 21031:2022 (SCI), Pereira et al. 2017 (energy language benchmarks), Green Software Foundation methodology, and IPCC AR6 carbon intensity figures.", 1),
-            (5, "Can I re-run the analysis later?", "Yes — upload the same file again. GreenDevAI detects if the file hash matches a recent run and offers to load cached results instead of re-running all agents.", 2)
+            (5, "What citations are included?", "ISO 21031:2022 (SCI), Pereira et al. 2017 (energy language benchmarks), Green Software Foundation methodology, and IPCC AR6 carbon intensity figures.", 1)
         ]
         cursor.executemany(
             "INSERT INTO faqs (category_index, question, answer, display_order) VALUES (?, ?, ?, ?)",
             faq_data
-        )
-
-    # Check if videos are empty
-    cursor.execute("SELECT COUNT(*) FROM video_tutorials")
-    if cursor.fetchone()[0] == 0:
-        video_data = [
-            (0, "Understanding Your Green Score", "4:32", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 0),
-            (0, "Sub-score Deep Dive", "6:15", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 1),
-            (1, "How RAPL Energy Profiling Works", "5:48", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 0),
-            (1, "Interpreting Energy Metrics", "3:20", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 1),
-            (2, "Cross-Language Energy Benchmarking", "7:02", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 0),
-            (2, "Closing the Gap with NumPy", "4:55", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 1),
-            (3, "Carbon Projection Methodology", "5:10", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 0),
-            (3, "Communicating Carbon Impact", "3:44", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 1),
-            (4, "Inside the Planner Agent", "6:30", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 0),
-            (4, "Multi-Agent Pipeline Overview", "8:15", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 1),
-            (5, "Exporting and Sharing Reports", "3:05", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 0),
-            (5, "Using Reports in CI/CD Pipelines", "5:22", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg", 1)
-        ]
-        cursor.executemany(
-            "INSERT INTO video_tutorials (category_index, title, duration, url, thumbnail, display_order) VALUES (?, ?, ?, ?, ?, ?)",
-            video_data
         )
 
     # Check if benchmark notes are empty

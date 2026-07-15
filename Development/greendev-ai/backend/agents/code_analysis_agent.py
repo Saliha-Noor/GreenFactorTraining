@@ -46,9 +46,12 @@ def analyze_code(code_string: str) -> dict:
 
     # Detect recursion
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in function_names:
-                recursion_calls.add(node.func.id)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func_name = node.name
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == func_name:
+                    recursion_calls.add(func_name)
+                    break
 
     lines        = [l for l in code_string.splitlines() if l.strip()]
     total_lines  = len(lines)

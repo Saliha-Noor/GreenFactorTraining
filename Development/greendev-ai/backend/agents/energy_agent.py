@@ -8,7 +8,26 @@ import io
 import time
 import traceback
 import contextlib
+import sys
+import os
+import subprocess
+import tempfile
 from codecarbon import EmissionsTracker
+
+try:
+    import resource
+except ImportError:
+    resource = None
+
+
+def limit_resources():
+    if resource is not None:
+        # Limit CPU time to 30 seconds
+        resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
+        # Limit address space to 512 MB
+        resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
+        # Limit number of processes
+        resource.setrlimit(resource.RLIMIT_NPROC, (10, 10))
 
 
 def measure_energy(code_string: str) -> dict:
@@ -26,23 +45,62 @@ def measure_energy(code_string: str) -> dict:
             save_to_file=False,
             allow_multiple_runs=True,
         )
-        tracker.start()
     except Exception as e:
         stderr_capture.write(f"CodeCarbon initialization fallback: {e}\n")
         tracker = None
 
+    # Write code to temp file
+    temp_dir = tempfile.mkdtemp(prefix="greendev_sandbox_")
+    temp_file_path = os.path.join(temp_dir, "user_code.py")
+    
+    preexec = limit_resources if (os.name != 'nt' and resource is not None) else None
+
+    # Start CodeCarbon tracking around the subprocess run
+    if tracker is not None:
+        try:
+            tracker.start()
+        except Exception as e:
+            stderr_capture.write(f"CodeCarbon start failed: {e}\n")
+            tracker = None
+
     try:
-        with contextlib.redirect_stdout(stdout_capture), \
-             contextlib.redirect_stderr(stderr_capture):
-            exec(compile(code_string, "<user_code>", "exec"), {})
-    except Exception:
-        exec_error = traceback.format_exc()
+        with open(temp_file_path, "w", encoding="utf-8") as f:
+            f.write(code_string)
+
+        res = subprocess.run(
+            [sys.executable, temp_file_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30.0,
+            cwd=temp_dir,
+            preexec_fn=preexec
+        )
+        stdout_capture.write(res.stdout or "")
+        stderr_capture.write(res.stderr or "")
+        if res.returncode != 0:
+            exec_error = f"Process exited with return code {res.returncode}"
+    except subprocess.TimeoutExpired as te:
+        exec_error = "TimeoutExpired: Code execution exceeded the 30-second limit."
+        stdout_capture.write(te.stdout.decode("utf-8") if isinstance(te.stdout, bytes) else (te.stdout or ""))
+        stderr_capture.write(te.stderr.decode("utf-8") if isinstance(te.stderr, bytes) else (te.stderr or ""))
+    except Exception as e:
+        exec_error = f"Subprocess execution failed: {e}\n{traceback.format_exc()}"
     finally:
         if tracker is not None:
             try:
                 emissions_data = tracker.stop()
             except Exception:
                 pass
+
+        # Cleanup temp file and dir
+        try:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            if os.path.exists(temp_dir):
+                os.rmdir(temp_dir)
+        except Exception:
+            pass
 
     elapsed = time.perf_counter() - start_time
 

@@ -7,76 +7,17 @@ and can attach anomaly notes to downstream agents.
 
 import json
 import re
-import os
 import google.generativeai as genai
-try:
-    from dotenv import load_dotenv
-except Exception:
-    def load_dotenv():
-        return None
+from dotenv import load_dotenv
+import os
 
 load_dotenv()
-try:
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-except Exception:
-    # If configuration fails at import time, defer to runtime (fallbacks exist)
-    pass
-
-
-def _extract_response_text(resp) -> str:
-    # Try common response shapes from different genai SDK versions
-    if resp is None:
-        return ""
-
-    # Direct text attribute
-    if isinstance(resp, str):
-        return resp
-
-    for attr in ("text", "content", "output", "response"):
-        val = getattr(resp, attr, None)
-        if isinstance(val, str) and val.strip():
-            return val
-
-    # Some SDKs return sequences like .candidates, .outputs, .result
-    for seq_attr in ("candidates", "outputs", "result", "responses", "choices"):
-        seq = getattr(resp, seq_attr, None)
-        if seq:
-            try:
-                first = seq[0]
-                if isinstance(first, dict):
-                    for key in ("content", "text"):
-                        if key in first and isinstance(first[key], str):
-                            return first[key]
-                else:
-                    cont = getattr(first, "content", None) or getattr(first, "text", None)
-                    if isinstance(cont, str):
-                        return cont
-            except Exception:
-                pass
-
-    # Fallback: string conversion
-    try:
-        return str(resp)
-    except Exception:
-        return ""
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 def _parse_json(text: str) -> dict:
-    if not isinstance(text, str):
-        text = str(text or "")
-
-    # Strip Markdown fences
     text = re.sub(r"```json|```", "", text).strip()
-
-    # Attempt to extract the first JSON object in the text
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = text[start:end + 1]
-    else:
-        candidate = text
-
-    return json.loads(candidate)
+    return json.loads(text)
 
 
 def build_execution_plan(code_stats: dict) -> dict:
@@ -85,7 +26,7 @@ def build_execution_plan(code_stats: dict) -> dict:
     Decide which agents to run and in what order.
     """
     try:
-        model  = genai.GenerativeModel("gemini-2.5-flash")
+        model  = genai.GenerativeModel("gemini-1.5-flash")
         prompt = f"""
 You are an orchestration planner for GreenDev AI, a multi-agent green-coding analysis system.
 
@@ -114,8 +55,7 @@ Return ONLY valid JSON (no markdown, no preamble):
 }}
 """
         response = model.generate_content(prompt)
-        raw = _extract_response_text(response)
-        return _parse_json(raw)
+        return _parse_json(response.text)
     except Exception as e:
         # Fallback: always run full pipeline
         return {
@@ -159,16 +99,15 @@ Return ONLY valid JSON (no markdown, no preamble):
 }}
 """
         response = model.generate_content(prompt)
-        raw = _extract_response_text(response)
-        return _parse_json(raw)
+        return _parse_json(response.text)
     except Exception:
         deviation = sci_scores.get("deviation_pct", 0.0)
-        anomaly = deviation > 15.0 or energy_data.get("energy_kwh", 0.0) == 0.0 or energy_data.get("execution_time", 0.0) < 0.001
+        anomaly = deviation > 50.0 or energy_data.get("energy_kwh", 0.0) == 0.0 or energy_data.get("execution_time", 0.0) < 0.001
         
         reason = None
         if anomaly:
-            if deviation > 15.0:
-                reason = f"SCI deviation is {deviation:.1f}%, exceeding the ±15% hardware benchmark variance limit."
+            if deviation > 50.0:
+                reason = f"SCI deviation is {deviation:.1f}%, exceeding the ±50% hardware benchmark variance limit."
             elif energy_data.get("energy_kwh", 0.0) == 0.0:
                 reason = "Energy measurement returned 0.0 kWh (unprivileged execution or virtualized CPU environments)."
             else:

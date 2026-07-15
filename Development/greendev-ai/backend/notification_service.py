@@ -34,26 +34,6 @@ class ConsoleEmailProvider(BaseEmailProvider):
         logger.info(f"Dispatched email to {to_email} with subject: '{subject}' (Logged to {log_file})")
         return True
 
-# SMTP or SendGrid provider placeholder templates (ready to plug in)
-class SMTPEmailProvider(BaseEmailProvider):
-    def __init__(self, host, port, username, password):
-        self.host = host
-        self.port = port
-        self.username = username
-        self.password = password
-
-    def send_email(self, to_email: str, subject: str, html_content: str) -> bool:
-        # Future SMTP send logic using smtplib
-        return True
-
-class SendGridEmailProvider(BaseEmailProvider):
-    def __init__(self, api_key):
-        self.api_key = api_key
-
-    def send_email(self, to_email: str, subject: str, html_content: str) -> bool:
-        # Future SendGrid SDK send logic
-        return True
-
 
 class NotificationService:
     def __init__(self, provider: BaseEmailProvider = None):
@@ -71,25 +51,6 @@ class NotificationService:
                 <li><strong>Estimated SCI:</strong> {sci_score:.4f} gCO2eq/run</li>
             </ul>
             <p>Open your dashboard to download the complete report and apply code-level energy recommendations.</p>
-            <br>
-            <p>Best regards,<br>The GreenDev AI Team</p>
-        </body>
-        </html>
-        """
-        return self.provider.send_email(to_email, subject, html_content)
-
-    def send_weekly_digest(self, to_email: str, total_runs: int, co2_saved: str) -> bool:
-        subject = "GreenDev AI — Weekly Carbon Digest"
-        html_content = f"""
-        <html>
-        <body>
-            <h2>Weekly Carbon Summary</h2>
-            <p>Here is your green software metrics digest for the past week:</p>
-            <ul>
-                <li><strong>Analyses Run:</strong> {total_runs}</li>
-                <li><strong>Carbon Emissions Avoided:</strong> {co2_saved}</li>
-            </ul>
-            <p>Keep optimizing your code structure to save more computing energy!</p>
             <br>
             <p>Best regards,<br>The GreenDev AI Team</p>
         </body>

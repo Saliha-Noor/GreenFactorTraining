@@ -8,6 +8,9 @@ import json
 from datetime import datetime
 from fpdf import FPDF
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPORTS_DIR = os.path.join(BASE_DIR, "reports")
+
 
 def _format_value(v) -> str:
     if v is None:
@@ -15,6 +18,15 @@ def _format_value(v) -> str:
     if isinstance(v, float):
         return f"{v:.6f}" if v < 0.001 else f"{v:.4f}"
     return str(v)
+
+
+def _format_score(v) -> str:
+    if v is None or v == "N/A":
+        return "N/A"
+    try:
+        return f"{float(v) / 10.0:.1f}"
+    except (ValueError, TypeError):
+        return str(v)
 
 
 # ─── Markdown ────────────────────────────────────────────────────────────────
@@ -77,11 +89,11 @@ def generate_markdown(code_stats: dict, energy_data: dict, benchmark_data: dict,
         "## 5. Green Score",
         f"| Dimension | Score |",
         f"|---|---|",
-        f"| **Overall** | **{green.get('overall', 'N/A')} / 100** |",
-        f"| Performance | {green.get('performance', 'N/A')} |",
-        f"| Energy | {green.get('energy', 'N/A')} |",
-        f"| Carbon | {green.get('carbon', 'N/A')} |",
-        f"| Maintainability | {green.get('maintainability', 'N/A')} |",
+        f"| **Overall** | **{_format_score(green.get('overall', 'N/A'))} / 10** |",
+        f"| Performance | {_format_score(green.get('performance', 'N/A'))} / 10 |",
+        f"| Energy | {_format_score(green.get('energy', 'N/A'))} / 10 |",
+        f"| Carbon | {_format_score(green.get('carbon', 'N/A'))} / 10 |",
+        f"| Maintainability | {_format_score(green.get('maintainability', 'N/A'))} / 10 |",
         "",
         "## 6. Carbon Cost Projection",
         f"| Metric | Value |",
@@ -216,11 +228,11 @@ def generate_pdf(code_stats: dict, energy_data: dict, benchmark_data: dict,
     # Section 5 — Green Score
     pdf.section_title("5. Green Score")
     score_rows = [
-        ("Overall",         f"{green.get('overall', 'N/A')} / 100"),
-        ("Performance",     str(green.get("performance", "N/A"))),
-        ("Energy",          str(green.get("energy", "N/A"))),
-        ("Carbon",          str(green.get("carbon", "N/A"))),
-        ("Maintainability", str(green.get("maintainability", "N/A"))),
+        ("Overall",         f"{_format_score(green.get('overall', 'N/A'))} / 10"),
+        ("Performance",     f"{_format_score(green.get('performance', 'N/A'))} / 10"),
+        ("Energy",          f"{_format_score(green.get('energy', 'N/A'))} / 10"),
+        ("Carbon",          f"{_format_score(green.get('carbon', 'N/A'))} / 10"),
+        ("Maintainability", f"{_format_score(green.get('maintainability', 'N/A'))} / 10"),
     ]
     for i, (k, v) in enumerate(score_rows):
         pdf.kv_row(k, v, shade=(i % 2 == 0))
@@ -246,8 +258,8 @@ def generate_pdf(code_stats: dict, energy_data: dict, benchmark_data: dict,
 
     # Save
     if output_path is None:
-        os.makedirs("reports", exist_ok=True)
-        output_path = f"reports/greendev_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        output_path = os.path.join(REPORTS_DIR, f"greendev_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
 
     pdf.output(output_path)
     return output_path

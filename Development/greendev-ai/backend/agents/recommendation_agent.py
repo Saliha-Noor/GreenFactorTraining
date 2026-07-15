@@ -1,7 +1,7 @@
 """
 Agent 5 — Recommendation Agent
 Calls Gemini API with all measured data and returns:
-  1. Green Score (0-10, with sub-scores)
+  1. Green Score (0-100, with sub-scores)
   2. Carbon Cost Projection (yearly CO2 estimate, current vs optimized)
 """
 
@@ -210,63 +210,124 @@ def get_recommendation(code_stats: dict, energy_data: dict,
         
         # Detect exact hotspots by scanning AST
         hotspots = []
-        nested_loop_loc = None
-        general_loop_loc = None
-        recursion_loc = None
         
         if code_string:
             try:
                 import ast
                 tree = ast.parse(code_string)
+                
+                # Build parent mapping
+                parent_map = {}
+                for parent in ast.walk(tree):
+                    for child in ast.iter_child_nodes(parent):
+                        parent_map[child] = parent
+                        
+                def get_enclosing_function(node):
+                    curr = parent_map.get(node)
+                    while curr:
+                        if isinstance(curr, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            return curr.name
+                        curr = parent_map.get(curr)
+                    return "global scope"
+                    
+                def is_inside_loop(node):
+                    curr = parent_map.get(node)
+                    while curr:
+                        if isinstance(curr, (ast.For, ast.While)):
+                            return True
+                        curr = parent_map.get(curr)
+                    return False
+
+                def get_node_line_range(node):
+                    start = node.lineno
+                    end = getattr(node, "end_lineno", start + 2)
+                    return f"lines {start}-{end}"
+
+                # Find all loops and recursion
+                ast_nested_loops = []
+                ast_single_loops = []
+                ast_recursion = []
+                
                 for node in ast.walk(tree):
-                    if isinstance(node, (ast.For, ast.While)):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        for child in ast.walk(node):
+                            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == node.name:
+                                ast_recursion.append((node, child))
+                                break
+                    elif isinstance(node, (ast.For, ast.While)):
+                        has_inner = False
                         for child in ast.walk(node):
                             if child is not node and isinstance(child, (ast.For, ast.While)):
-                                s = node.lineno
-                                e = getattr(node, "end_lineno", s + 4)
-                                nested_loop_loc = f"lines {s}-{e}"
+                                has_inner = True
                                 break
-                        if not nested_loop_loc and not general_loop_loc:
-                            s = node.lineno
-                            e = getattr(node, "end_lineno", s + 2)
-                            general_loop_loc = f"lines {s}-{e}"
-            except:
+                        
+                        func_name = get_enclosing_function(node)
+                        if has_inner:
+                            ast_nested_loops.append((node, func_name))
+                        else:
+                            if not is_inside_loop(node):
+                                ast_single_loops.append((node, func_name))
+
+                # Populate hotspots list
+                for node, func_name in ast_nested_loops:
+                    hotspots.append({
+                        "fn": func_name,
+                        "loc": get_node_line_range(node),
+                        "energy_pct": "42%" if task_type == "matrix-multiply" else "38%",
+                        "fix": f"Replace nested loops in '{func_name}' with vectorized operations (e.g. using numpy or list comprehensions) to avoid O(N^2) CPU overhead.",
+                        "severity": "high",
+                    })
+
+                for func_def_node, call_node in ast_recursion:
+                    func_name = func_def_node.name
+                    hotspots.append({
+                        "fn": func_name,
+                        "loc": get_node_line_range(func_def_node),
+                        "energy_pct": "24%",
+                        "fix": f"Rewrite recursive function '{func_name}' to be iterative (with dynamic programming/memoization) to avoid stack frame overhead and O(2^N) execution paths.",
+                        "severity": "high",
+                    })
+
+                for node, func_name in ast_single_loops:
+                    if len(hotspots) < 2:
+                        hotspots.append({
+                            "fn": func_name,
+                            "loc": get_node_line_range(node),
+                            "energy_pct": "18%",
+                            "fix": f"Optimize repeated calculations in '{func_name}': hoist loop-invariant values outside the loop, or use lazy generators.",
+                            "severity": "medium",
+                        })
+
+                if not hotspots:
+                    funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+                    if funcs:
+                        largest_func = max(funcs, key=lambda f: len(list(ast.walk(f))))
+                        hotspots.append({
+                            "fn": largest_func.name,
+                            "loc": get_node_line_range(largest_func),
+                            "energy_pct": "12%",
+                            "fix": f"Function '{largest_func.name}' has no critical loop hotspots. Maintain simple control flow and consider caching/memoization if called frequently.",
+                            "severity": "low",
+                        })
+                    else:
+                        num_lines = len(code_string.splitlines())
+                        hotspots.append({
+                            "fn": "global scope",
+                            "loc": f"lines 1-{min(15, num_lines)}",
+                            "energy_pct": "10%",
+                            "fix": "No critical energy hotspots identified. Structure code into modular functions to prevent global namespace lookup overhead.",
+                            "severity": "low",
+                        })
+            except Exception:
                 pass
-                
-        # Generate hotspots list
-        if nested_loops > 0:
-            hotspots.append({
-                "fn": "compute_similarity" if "matrix_solver" in code_string or "similarity" in code_string else "process_data",
-                "loc": nested_loop_loc or "lines 47-53",
-                "energy_pct": "42%" if task_type == "matrix-multiply" else "38%",
-                "fix": "Replace nested loops with vectorised operations (e.g., numpy.einsum or matrix dot product) to leverage BLAS acceleration.",
-                "severity": "high",
-            })
-            
-        if recursion:
-            hotspots.append({
-                "fn": "solve_recurrence",
-                "loc": recursion_loc or "lines 12-25",
-                "energy_pct": "24%",
-                "fix": "Rewrite recursive call into an iterative loop with dynamic programming to avoid stack frame overhead and O(2^N) execution paths.",
-                "severity": "high",
-            })
-            
-        if loops > 0 and len(hotspots) < 2:
-            hotspots.append({
-                "fn": "load_data" if "loader" in code_string else "transform_elements",
-                "loc": general_loop_loc or "lines 15-22",
-                "energy_pct": "18%",
-                "fix": "Optimize repeated operations in loops: hoist invariant calculations, use generators for lazy I/O loading, or write list comprehensions.",
-                "severity": "medium",
-            })
-            
+
         if not hotspots:
+            # Fallback if parsing failed or string was empty
             hotspots.append({
-                "fn": "general_block",
+                "fn": "global scope",
                 "loc": "lines 1-10",
                 "energy_pct": "10%",
-                "fix": "No critical energy hotspots identified. Maintain vectorised structures and avoid redundant global variable lookups.",
+                "fix": "No critical energy hotspots identified. Maintain vectorized structures and avoid redundant global variable lookups.",
                 "severity": "low",
             })
             

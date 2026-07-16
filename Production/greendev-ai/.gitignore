@@ -1,0 +1,29 @@
+# Databases and Logs
+*.db
+*.log
+logs/
+backend/logs/
+reports/
+backend/reports/
+
+# Environment Variables / Secrets
+.env
+backend/.env
+
+# Dependencies / Virtual Environments
+node_modules/
+.venv/
+venv/
+env/
+ENV/
+dist/
+build/
+
+# Compiled Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS Metadata
+.DS_Store
+Thumbs.db
